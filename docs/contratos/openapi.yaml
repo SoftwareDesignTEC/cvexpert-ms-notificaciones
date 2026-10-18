@@ -1,0 +1,667 @@
+openapi: 3.0.3
+info:
+  title: CVExpert — Servicio de Notificaciones
+  version: 0.1.0-borrador
+  description: |
+    API REST del microservicio de Notificaciones de CVExpert (Fase II). **Borrador** del contrato.
+
+    - Solo APIM llama a este backend. APIM valida el token de Google y agrega los encabezados
+      `X-User-Id` (id del usuario), `X-User-Email` y, en rutas de administración, `X-User-Role`.
+      Los clientes (web y Android) no envían esos encabezados: los pone APIM.
+    - Las rutas de usuario solo devuelven o modifican datos del usuario indicado en `X-User-Id`.
+    - Todas las fechas son **epoch en milisegundos UTC** (entero `int64`), nunca texto ISO.
+    - Un campo marcado como opcional en una respuesta **se omite** cuando no tiene valor (no se envía `null`).
+    - Errores: `{ "status": 400, "message": "texto", "errors": { "campo": "mensaje" } }`; `errors` solo aparece en 400.
+    - El tiempo real (SignalR, `/hubs/notifications`) y el mensaje de la cola de Service Bus se documentan
+      en `README.md` y `evento-notificacion.schema.json`, no aquí.
+  contact:
+    name: Equipo de Notificaciones
+servers:
+  - url: http://localhost:5029
+    description: Desarrollo local. En los demás entornos el acceso es solo a través de APIM.
+tags:
+  - name: Directorio
+    description: Correo e idioma del usuario, usados para el correo y para renderizar las notificaciones.
+  - name: Dispositivos
+    description: Tokens de Firebase Cloud Messaging (FCM) para push en Android.
+  - name: Notificaciones
+    description: Historial del usuario, contador de no leídas y marcado como leídas.
+  - name: Plantillas
+    description: Plantillas de título y cuerpo por tipo de evento e idioma. Solo administradores.
+  - name: Salud
+    description: Estado del servicio.
+
+paths:
+  /notifications/directory/me:
+    put:
+      tags: [Directorio]
+      operationId: upsertMyDirectoryEntry
+      summary: Registra o actualiza al usuario en el directorio
+      description: |
+        Crea o actualiza la entrada del usuario. El correo se toma de `X-User-Email` (no del body) y se
+        actualiza en cada llamada. El cliente debería llamarlo al iniciar sesión y cuando el usuario cambie de idioma.
+        Si llega un evento para un usuario que no está en el directorio, la notificación igual se guarda y se
+        entrega por SignalR y push, en español por defecto, pero no se envía correo.
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - $ref: '#/components/parameters/XUserEmail'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectoryUpdate'
+            example:
+              language: es
+      responses:
+        '200':
+          description: Entrada del directorio tal como quedó guardada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryEntry'
+              example:
+                userId: '108234567890123456789'
+                email: ana@ejemplo.com
+                language: es
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications/devices:
+    post:
+      tags: [Dispositivos]
+      operationId: registerDevice
+      summary: Registra un dispositivo para push
+      description: |
+        Idempotente por `token`:
+        - Si el token no existía, se registra para el usuario y responde **201**.
+        - Si ya existía (del mismo usuario o de otro, por ejemplo un teléfono que cambió de cuenta),
+          queda asociado al usuario actual y responde **200**. Un token nunca pertenece a dos usuarios a la vez.
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistration'
+            example:
+              token: 'fGx1Yz8sQ0a3:APA91bH-ejemplo_de_token_de_fcm'
+              platform: android
+      responses:
+        '201':
+          description: Dispositivo registrado por primera vez.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '200':
+          description: El token ya existía; ahora queda asociado al usuario actual.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications/devices/{token}:
+    delete:
+      tags: [Dispositivos]
+      operationId: deleteDevice
+      summary: Quita un dispositivo
+      description: |
+        Deja de enviar push a ese token (por ejemplo, al cerrar sesión). Idempotente: responde 204 aunque el
+        token no exista o no pertenezca al usuario; en ese último caso no se modifica nada.
+        El token va codificado para URL (los tokens de FCM incluyen `:`).
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - $ref: '#/components/parameters/DeviceToken'
+      responses:
+        '204':
+          description: El token ya no está asociado al usuario.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications:
+    get:
+      tags: [Notificaciones]
+      operationId: listNotifications
+      summary: Lista las notificaciones del usuario
+      description: Lista paginada, más recientes primero (por `createdAt` descendente).
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Unread'
+      responses:
+        '200':
+          description: Página de notificaciones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedNotifications'
+              example:
+                totalRecords: 42
+                page: 1
+                pageSize: 10
+                items:
+                  - id: 6711a2f0c3e4b5a6d7e8f901
+                    type: application.status_changed
+                    title: Tu postulación avanzó
+                    body: Tu postulación a Desarrollador Backend en Acme cambió a "Entrevista".
+                    data:
+                      applicationId: '1532'
+                      jobOfferId: '88'
+                      jobTitle: Desarrollador Backend
+                      company: Acme
+                      previousStatus: in-progress
+                      newStatus: interview
+                    read: false
+                    createdAt: 1760745601234
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications/unread-count:
+    get:
+      tags: [Notificaciones]
+      operationId: getUnreadCount
+      summary: Cantidad de notificaciones no leídas
+      description: Para la insignia del centro de notificaciones.
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+      responses:
+        '200':
+          description: Cantidad de notificaciones con `read = false`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadCount'
+              example:
+                count: 3
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications/{id}/read:
+    patch:
+      tags: [Notificaciones]
+      operationId: markNotificationRead
+      summary: Marca una notificación como leída
+      description: |
+        No lleva body. Idempotente: si ya estaba leída, conserva su `readAt` original.
+        Responde 404 si la notificación no existe o no es del usuario (no se distingue un caso del otro).
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - $ref: '#/components/parameters/NotificationId'
+      responses:
+        '200':
+          description: La notificación, ya marcada como leída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications/read-all:
+    post:
+      tags: [Notificaciones]
+      operationId: markAllNotificationsRead
+      summary: Marca todas las notificaciones como leídas
+      description: No lleva body. Marca como leídas todas las notificaciones no leídas del usuario. Idempotente.
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+      responses:
+        '204':
+          description: Todas las notificaciones del usuario quedaron leídas.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications/templates:
+    get:
+      tags: [Plantillas]
+      operationId: listTemplates
+      summary: Lista todas las plantillas
+      description: |
+        Devuelve las 8 plantillas (4 tipos × 2 idiomas) como arreglo. No se pagina porque la cantidad es fija.
+        Requiere `X-User-Role: admin`.
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - $ref: '#/components/parameters/XUserRole'
+      responses:
+        '200':
+          description: Las 8 plantillas.
+          content:
+            application/json:
+              schema:
+                type: array
+                minItems: 8
+                maxItems: 8
+                items:
+                  $ref: '#/components/schemas/Template'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications/templates/{type}/{language}:
+    parameters:
+      - $ref: '#/components/parameters/TemplateType'
+      - $ref: '#/components/parameters/TemplateLanguage'
+    get:
+      tags: [Plantillas]
+      operationId: getTemplate
+      summary: Obtiene una plantilla
+      description: 'Requiere `X-User-Role: admin`. Un `type` o `language` fuera de los valores permitidos responde 400.'
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - $ref: '#/components/parameters/XUserRole'
+      responses:
+        '200':
+          description: La plantilla.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Plantillas]
+      operationId: replaceTemplate
+      summary: Reemplaza una plantilla
+      description: |
+        Reemplaza `title` y `body`. Requiere `X-User-Role: admin`.
+        `title` y `body` admiten marcadores `{{campo}}`; solo se aceptan los marcadores permitidos para ese
+        `type` (lista en `README.md`). Un marcador no permitido responde 400 con el detalle en `errors`.
+        El servidor fija `updatedAt` y toma `updatedBy` de `X-User-Email`.
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - $ref: '#/components/parameters/XUserEmail'
+        - $ref: '#/components/parameters/XUserRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateUpdate'
+            example:
+              title: Tu postulación avanzó
+              body: Tu postulación a {{jobTitle}} en {{company}} cambió a "{{newStatus}}".
+      responses:
+        '200':
+          description: La plantilla tal como quedó guardada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /health:
+    get:
+      tags: [Salud]
+      operationId: getHealth
+      summary: Estado del servicio
+      description: Público, sin encabezados de identidad. Es la única ruta fuera del prefijo `/notifications`.
+      responses:
+        '200':
+          description: El servicio está activo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: ok
+
+components:
+  parameters:
+    XUserId:
+      name: X-User-Id
+      in: header
+      required: true
+      description: Id del usuario autenticado, agregado por APIM (se asume el `sub` del token de Google). Si falta, responde 401.
+      schema:
+        type: string
+        minLength: 1
+      example: '108234567890123456789'
+    XUserEmail:
+      name: X-User-Email
+      in: header
+      required: true
+      description: Correo del usuario autenticado, agregado por APIM. Si falta, responde 401.
+      schema:
+        type: string
+        format: email
+      example: ana@ejemplo.com
+    XUserRole:
+      name: X-User-Role
+      in: header
+      required: true
+      description: Rol del usuario, agregado por APIM en rutas de administración. Si falta o no es `admin`, responde 403.
+      schema:
+        type: string
+      example: admin
+    NotificationId:
+      name: id
+      in: path
+      required: true
+      description: Id de la notificación (texto).
+      schema:
+        type: string
+      example: 6711a2f0c3e4b5a6d7e8f901
+    DeviceToken:
+      name: token
+      in: path
+      required: true
+      description: Token de FCM, codificado para URL.
+      schema:
+        type: string
+        minLength: 1
+    TemplateType:
+      name: type
+      in: path
+      required: true
+      description: Tipo de evento de la plantilla.
+      schema:
+        $ref: '#/components/schemas/NotificationType'
+    TemplateLanguage:
+      name: language
+      in: path
+      required: true
+      description: Idioma de la plantilla.
+      schema:
+        $ref: '#/components/schemas/Language'
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Número de página, desde 1. Un valor menor que 1 responde 400.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      description: Elementos por página, de 1 a 100. Un valor fuera de ese rango responde 400.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 10
+    Unread:
+      name: unread
+      in: query
+      required: false
+      description: '`true`: solo no leídas. `false`: solo leídas. Si se omite: todas.'
+      schema:
+        type: boolean
+
+  responses:
+    BadRequest:
+      description: Solicitud inválida. `errors` indica el problema por campo.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 400
+            message: La solicitud tiene errores de validación.
+            errors:
+              language: Debe ser "es" o "en".
+    Unauthorized:
+      description: Falta la identidad del usuario (`X-User-Id` o, donde aplica, `X-User-Email`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 401
+            message: Falta el encabezado X-User-Id.
+    Forbidden:
+      description: El usuario no tiene rol `admin`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 403
+            message: Se requiere rol de administrador.
+    NotFound:
+      description: El recurso no existe o no pertenece al usuario.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 404
+            message: Notificación no encontrada.
+    InternalError:
+      description: Error inesperado del servidor.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 500
+            message: Ocurrió un error inesperado.
+
+  schemas:
+    EpochMillis:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Epoch en milisegundos UTC.
+      example: 1760745601234
+
+    NotificationType:
+      type: string
+      enum: [application.status_changed, cv.generated, job.new, course.recommended]
+      description: Tipo de evento que originó la notificación.
+
+    Language:
+      type: string
+      enum: [es, en]
+
+    Error:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: integer
+          format: int32
+          description: Código HTTP, igual al de la respuesta.
+        message:
+          type: string
+          description: Descripción legible del error.
+        errors:
+          type: object
+          description: Solo en 400. Mensaje de error por campo.
+          additionalProperties:
+            type: string
+
+    DirectoryUpdate:
+      type: object
+      required: [language]
+      additionalProperties: false
+      properties:
+        language:
+          $ref: '#/components/schemas/Language'
+
+    DirectoryEntry:
+      type: object
+      required: [userId, email, language]
+      properties:
+        userId:
+          type: string
+          description: Valor de `X-User-Id`.
+        email:
+          type: string
+          format: email
+          description: Valor de `X-User-Email` en la última llamada.
+        language:
+          $ref: '#/components/schemas/Language'
+
+    DeviceRegistration:
+      type: object
+      required: [token, platform]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          minLength: 1
+          description: Token de registro de FCM.
+        platform:
+          type: string
+          enum: [android]
+          description: Plataforma del dispositivo. Por ahora solo Android.
+
+    Device:
+      type: object
+      required: [token, platform, registeredAt]
+      properties:
+        token:
+          type: string
+        platform:
+          type: string
+          enum: [android]
+        registeredAt:
+          allOf:
+            - $ref: '#/components/schemas/EpochMillis'
+          description: Cuándo se asoció el token al usuario actual.
+
+    Notification:
+      type: object
+      required: [id, type, title, body, data, read, createdAt]
+      properties:
+        id:
+          type: string
+          description: Id de la notificación.
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        title:
+          type: string
+          description: Título ya renderizado en el idioma del usuario.
+        body:
+          type: string
+          description: Cuerpo ya renderizado en el idioma del usuario.
+        data:
+          type: object
+          additionalProperties: true
+          description: El `data` del evento original, sin cambios (ver `evento-notificacion.schema.json`).
+        read:
+          type: boolean
+        createdAt:
+          allOf:
+            - $ref: '#/components/schemas/EpochMillis'
+          description: Cuándo Notificaciones guardó la notificación.
+        readAt:
+          allOf:
+            - $ref: '#/components/schemas/EpochMillis'
+          description: Cuándo se marcó como leída. Se omite mientras `read` es `false`.
+
+    PagedNotifications:
+      type: object
+      required: [totalRecords, page, pageSize, items]
+      properties:
+        totalRecords:
+          type: integer
+          format: int64
+          description: Total de notificaciones que cumplen el filtro, sin paginar.
+        page:
+          type: integer
+          format: int32
+        pageSize:
+          type: integer
+          format: int32
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+
+    UnreadCount:
+      type: object
+      required: [count]
+      properties:
+        count:
+          type: integer
+          format: int64
+          minimum: 0
+
+    TemplateUpdate:
+      type: object
+      required: [title, body]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          description: Título con marcadores `{{campo}}` opcionales.
+        body:
+          type: string
+          minLength: 1
+          description: Cuerpo con marcadores `{{campo}}` opcionales.
+
+    Template:
+      type: object
+      required: [type, language, title, body, updatedAt]
+      properties:
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        language:
+          $ref: '#/components/schemas/Language'
+        title:
+          type: string
+        body:
+          type: string
+        updatedAt:
+          $ref: '#/components/schemas/EpochMillis'
+        updatedBy:
+          type: string
+          description: Correo del administrador que la modificó por última vez. Se omite en las plantillas por defecto.
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]

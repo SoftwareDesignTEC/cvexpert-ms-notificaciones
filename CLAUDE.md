@@ -34,42 +34,15 @@ Todos los canales son responsabilidad de este servicio (ningún otro servicio pu
 
 ## Estado actual
 
-Hecho: estructura base, `/health`, formato de errores (`Errors/`), hub de SignalR con identidad por `X-User-Id`, pruebas de integración (`WebApplicationFactory`, sin Mongo ni Service Bus).
+Hecho: estructura base, `/health`, formato de errores (`Errors/`), hub de SignalR con identidad por `X-User-Id`, pruebas de integración (`WebApplicationFactory`, sin Mongo ni Service Bus), borrador del contrato en `docs/contratos/` (versión 0.1, validado).
 
-Pendiente, en este orden: consumidor de Service Bus → persistencia en Mongo → envío por SignalR → endpoints REST → FCM → correo. Al agregar el consumidor de Service Bus, las pruebas deben poder quitarlo o reemplazarlo en el factory para no conectarse a Azure.
+Contrato: falta que el equipo lo revise (preguntas abiertas al final de `docs/contratos/README.md`) y copiar la carpeta a `cvexpert-docs/contratos` por PR.
 
-## Contratos (propuesta, pendiente de acordar con el equipo)
+Código pendiente, en este orden: consumidor de Service Bus → persistencia en Mongo → envío por SignalR → endpoints REST → FCM → correo. Al agregar el consumidor de Service Bus, las pruebas deben poder quitarlo o reemplazarlo en el factory para no conectarse a Azure.
 
-**Evento de la cola.** Como este servicio no puede consultar a otros, el evento debe traer todo lo necesario (incluido correo e idioma):
+## Contratos
 
-```json
-{
-  "eventId": "uuid",                      // idempotencia: Service Bus entrega al menos una vez
-  "type": "postulacion.estadoCambiado",   // | cv.generado | oferta.nueva | curso.recomendado
-  "occurredAt": 1760716800000,            // epoch ms UTC
-  "userId": "usuario-1",
-  "userEmail": "ana@ejemplo.com",
-  "language": "es",                       // es | en
-  "data": { }                             // campos propios de cada tipo
-}
-```
-
-**Endpoints para clientes (vía APIM):**
-
-- `GET /notifications?page&pageSize&unreadOnly` → `{ totalRecords, page, pageSize, items }`
-- `GET /notifications/unread-count`
-- `PATCH /notifications/{id}/read`, `PATCH /notifications/read-all`
-- `POST /devices` `{ token, platform: "android" }`, `DELETE /devices/{token}` (token de FCM)
-- `GET`/`PUT /admin/templates/{type}/{language}` (requiere `X-User-Role`)
-- SignalR: evento `notificacionRecibida` con la misma forma que cada elemento de `items`.
-
-**Decisiones abiertas:**
-
-1. `oferta.nueva`: ¿a quién se notifica? Este servicio no sabe qué usuarios están interesados; lo más simple es que el servicio de ofertas publique un evento por destinatario.
-2. Confirmar que `userEmail` y `language` viajan en cada evento.
-3. ¿Preferencias por canal (p. ej. apagar correos)? Si sí, `GET`/`PUT /preferences`.
-4. ¿Se guarda el texto ya armado (título y cuerpo en su idioma) o solo `type` + `data` y cada cliente lo arma?
-5. Confirmar con APIM que `X-User-Id` llega en el `negotiate` y en el handshake del WebSocket de SignalR.
+La fuente de verdad es [`docs/contratos/`](docs/contratos/): `evento-notificacion.schema.json` (mensaje de la cola `notificaciones-eventos`), `openapi.yaml` (endpoints REST) y `README.md` (cómo publicar eventos, plantillas, SignalR y preguntas abiertas). Si el código y el contrato no coinciden, manda el contrato; cualquier cambio se acuerda con el equipo y se actualiza ahí primero.
 
 ## Notas técnicas
 
@@ -83,6 +56,10 @@ Pendiente, en este orden: consumidor de Service Bus → persistencia en Mongo �
 dotnet build
 dotnet test
 dotnet run --project src/Notificaciones.Api   # Swagger en /swagger (Development)
+
+# Validar contratos (requiere Node)
+npx @redocly/cli lint docs/contratos/openapi.yaml
+npx ajv-cli validate --spec=draft2020 -c ajv-formats -s docs/contratos/evento-notificacion.schema.json -d <ejemplo>.json
 ```
 
 ## Forma de trabajo
