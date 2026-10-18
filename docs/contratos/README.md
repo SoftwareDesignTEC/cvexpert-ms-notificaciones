@@ -167,8 +167,17 @@ Un marcador opcional sin valor se reemplaza por texto vacío. Guardar una planti
 
 ## 5. Tiempo real (SignalR)
 
-- **Hub:** `/hubs/notifications` (a través de APIM).
-- **Identidad:** el servidor identifica al usuario por `X-User-Id`, que agrega APIM. Sin ese encabezado la conexión se cierra. Falta confirmar que llega también en la conexión WebSocket (pregunta abierta 8).
+El APIM es tier Consumption y no soporta WebSockets, así que el tiempo real usa **Azure SignalR Service** (tier Free). APIM solo participa en el primer paso:
+
+1. **Negotiate (vía APIM).** El cliente hace `POST /notifications/hub/negotiate` a través de APIM, con su token de Google como en cualquier otra ruta. APIM agrega `X-User-Id` y el backend responde con la `url` del SignalR Service y un `accessToken` de corta duración emitido para ese usuario (ver `openapi.yaml`).
+2. **Conexión (directa).** El cliente se conecta al SignalR Service con esa `url` y ese `accessToken`, sin pasar por APIM. Esa conexión no lleva `X-User-Id`: la identidad viaja dentro del `accessToken`.
+3. **Envío.** El backend envía a ese usuario a través del SignalR Service.
+
+La librería cliente de SignalR (`@microsoft/signalr` en la web, `com.microsoft.signalr` en Android) hace los pasos 1 y 2 sola: basta con apuntarla a la ruta del hub en APIM.
+
+- **Hub:** `/notifications/hub` (en APIM). El negotiate es `/notifications/hub/negotiate`.
+- **Identidad:** sale de `X-User-Id` en el negotiate. Sin ese encabezado, el negotiate responde 401.
+- **Límites del tier Free:** 20 conexiones simultáneas y 20 000 mensajes por día.
 - **Mensaje:** cuando llega una notificación, el servidor invoca `notification` en las conexiones de ese usuario. El argumento es el objeto `Notification` de [`openapi.yaml`](openapi.yaml), el mismo que devuelve `GET /notifications`:
 
 ```json
@@ -191,16 +200,29 @@ Un marcador opcional sin valor se reemplaza por texto vacío. Guardar una planti
 ```
 
 ```js
+const connection = new signalR.HubConnectionBuilder()
+  .withUrl(`${APIM_BASE_URL}/notifications/hub`, { accessTokenFactory: () => tokenDeGoogle })
+  .withAutomaticReconnect()
+  .build();
+
 connection.on("notification", (n) => { /* agregar a la lista y subir el contador */ });
+await connection.start();
 ```
+
+`accessTokenFactory` solo autentica el negotiate ante APIM. Para conectarse al SignalR Service, la librería usa el `accessToken` que devuelve el negotiate.
 
 ## 6. Preguntas abiertas
 
-1. **WebSockets en APIM.** ¿El tier de APIM soporta WebSockets para SignalR? Si no, el cliente cae a otros transportes (Server-Sent Events o long polling). Hay que decidirlo con Cabrera.
-2. **Texto de las plantillas por defecto.** El texto exacto en español e inglés se escribirá al implementar los correos.
-3. **Paginación por cursor.** Queda por ver si más adelante hace falta paginar por cursor en vez de por `page`.
-4. **Mismo `X-User-Id` en todos los servicios.** Se asume que es el `sub` del token de Google. Falta confirmarlo con Cabrera (APIM).
-5. **Campos de `data`.** Andrés, Gabo y Justin deben confirmar que los campos de `data` de sus eventos son los que ellos pueden enviar.
-6. **Valores de lista en las plantillas.** Marcadores como `{{newStatus}}`, `{{previousStatus}}`, `{{modality}}` e `{{isPaid}}` mostrarían el valor crudo (`in-progress`, `hybrid`, `true`). **Propuesta por defecto:** al renderizar, esos valores se traducen al idioma del usuario con un diccionario pequeño (por ejemplo `in-progress` → "En proceso" / "In progress", `hybrid` → "Híbrida" / "Hybrid"), en vez de mostrar el valor crudo.
-7. **Preferencias por canal.** ¿El usuario puede apagar canales (correo, push, tiempo real) o tipos de evento? Por ahora no está en el contrato ni en el plan. Si se decide, sería un campo `preferences` en `PUT /notifications/directory/me` y el consumidor lo respetaría al enviar. Se decide con el grupo, porque toca la pantalla de configuración de notificaciones.
-8. **`X-User-Id` en SignalR.** Falta confirmar con Cabrera (APIM) que `X-User-Id` llega tanto en la petición `negotiate` como en la conexión WebSocket. Los navegadores no dejan poner encabezados propios en un WebSocket, así que si APIM no los agrega ahí, hay que identificar al usuario de otra forma (por ejemplo, con un token de acceso que entrega `negotiate`). Es una verificación pendiente, no un hecho.
+Se mantiene la numeración original para poder referirse a cada pregunta. Las resueltas están al final.
+
+- **2. Texto de las plantillas por defecto.** El texto exacto en español e inglés se escribirá al implementar los correos.
+- **3. Paginación por cursor.** Queda por ver si más adelante hace falta paginar por cursor en vez de por `page`.
+- **5. Campos de `data`.** Andrés, Gabo y Justin deben confirmar que los campos de `data` de sus eventos son los que ellos pueden enviar.
+- **6. Valores de lista en las plantillas.** Marcadores como `{{newStatus}}`, `{{previousStatus}}`, `{{modality}}` e `{{isPaid}}` mostrarían el valor crudo (`in-progress`, `hybrid`, `true`). **Propuesta por defecto:** al renderizar, esos valores se traducen al idioma del usuario con un diccionario pequeño (por ejemplo `in-progress` → "En proceso" / "In progress", `hybrid` → "Híbrida" / "Hybrid"), en vez de mostrar el valor crudo.
+- **7. Preferencias por canal.** ¿El usuario puede apagar canales (correo, push, tiempo real) o tipos de evento? Por ahora no está en el contrato ni en el plan. Si se decide, sería un campo `preferences` en `PUT /notifications/directory/me` y el consumidor lo respetaría al enviar. Se decide con el grupo, porque toca la pantalla de configuración de notificaciones.
+
+### Resueltas
+
+- **1. WebSockets en APIM.** El APIM es tier Consumption y no soporta WebSockets. Se usará Azure SignalR Service (Free): el negotiate pasa por APIM y la conexión va directa al SignalR Service (sección 5).
+- **4. Mismo `X-User-Id` en todos los servicios.** `X-User-Id` es el `sub` del token de Google y es el mismo valor en todos los servicios. APIM lo sobrescribe siempre, así que un cliente no puede suplantarlo enviándolo él mismo. Los encabezados de identidad solo llegan al backend cuando se conecten las operaciones de Notificaciones en APIM.
+- **8. `X-User-Id` en SignalR.** Queda cerrada con la 1: `X-User-Id` solo hace falta en el negotiate, que pasa por APIM. La conexión al SignalR Service se identifica con el `accessToken` que entrega el negotiate.

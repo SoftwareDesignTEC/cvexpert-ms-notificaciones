@@ -6,14 +6,16 @@ info:
     API REST del microservicio de Notificaciones de CVExpert (Fase II). **Borrador** del contrato.
 
     - Solo APIM llama a este backend. APIM valida el token de Google y agrega los encabezados
-      `X-User-Id` (id del usuario), `X-User-Email` y, en rutas de administración, `X-User-Role`.
-      Los clientes (web y Android) no envían esos encabezados: los pone APIM.
+      `X-User-Id` (el `sub` del token de Google, el mismo en todos los servicios), `X-User-Email` y,
+      en rutas de administración, `X-User-Role`. APIM los sobrescribe siempre: los clientes (web y Android)
+      no pueden enviarlos ni suplantarlos.
     - Las rutas de usuario solo devuelven o modifican datos del usuario indicado en `X-User-Id`.
     - Todas las fechas son **epoch en milisegundos UTC** (entero `int64`), nunca texto ISO.
     - Un campo marcado como opcional en una respuesta **se omite** cuando no tiene valor (no se envía `null`).
     - Errores: `{ "status": 400, "message": "texto", "errors": { "campo": "mensaje" } }`; `errors` solo aparece en 400.
-    - El tiempo real (SignalR, `/hubs/notifications`) y el mensaje de la cola de Service Bus se documentan
-      en `README.md` y `evento-notificacion.schema.json`, no aquí.
+    - Tiempo real: aquí solo está el negotiate (`POST /notifications/hub/negotiate`). La conexión va directa a
+      Azure SignalR Service y se documenta en `README.md`. El mensaje de la cola de Service Bus está en
+      `evento-notificacion.schema.json`.
   contact:
     name: Equipo de Notificaciones
 servers:
@@ -26,6 +28,8 @@ tags:
     description: Tokens de Firebase Cloud Messaging (FCM) para push en Android.
   - name: Notificaciones
     description: Historial del usuario, contador de no leídas y marcado como leídas.
+  - name: Tiempo real
+    description: Negotiate de SignalR. Entrega la URL de Azure SignalR Service y un token de acceso para el usuario.
   - name: Plantillas
     description: Plantillas de título y cuerpo por tipo de evento e idioma. Solo administradores.
   - name: Salud
@@ -238,6 +242,41 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /notifications/hub/negotiate:
+    post:
+      tags: [Tiempo real]
+      operationId: negotiateSignalR
+      summary: Negotiate de SignalR
+      description: |
+        Primer paso de la conexión en tiempo real. Lo llama la librería cliente de SignalR al conectarse a
+        `/notifications/hub`; el cliente no lo llama a mano. No lleva body.
+        Responde con la `url` de Azure SignalR Service y un `accessToken` de corta duración emitido para el
+        usuario de `X-User-Id`. Con eso el cliente se conecta directo al SignalR Service, sin pasar por APIM.
+        La respuesta la arma el SDK de Azure SignalR y puede traer otros campos del protocolo de SignalR.
+      parameters:
+        - $ref: '#/components/parameters/XUserId'
+        - name: negotiateVersion
+          in: query
+          required: false
+          description: Versión del protocolo de negotiate. La agrega la librería cliente.
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: Dónde y con qué token conectarse al SignalR Service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalRNegotiateResponse'
+              example:
+                url: https://cvexpert-signalr.service.signalr.net/client/?hub=notifications
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ejemplo.firma
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /notifications/templates:
     get:
       tags: [Plantillas]
@@ -354,7 +393,7 @@ components:
       name: X-User-Id
       in: header
       required: true
-      description: Id del usuario autenticado, agregado por APIM (se asume el `sub` del token de Google). Si falta, responde 401.
+      description: Id del usuario autenticado. Es el `sub` del token de Google, el mismo en todos los servicios. APIM lo sobrescribe siempre. Si falta, responde 401.
       schema:
         type: string
         minLength: 1
@@ -657,6 +696,18 @@ components:
         updatedBy:
           type: string
           description: Correo del administrador que la modificó por última vez. Se omite en las plantillas por defecto.
+
+    SignalRNegotiateResponse:
+      type: object
+      required: [url, accessToken]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL del hub en Azure SignalR Service.
+        accessToken:
+          type: string
+          description: Token de acceso (JWT) de corta duración para conectarse al SignalR Service como este usuario.
 
     Health:
       type: object
