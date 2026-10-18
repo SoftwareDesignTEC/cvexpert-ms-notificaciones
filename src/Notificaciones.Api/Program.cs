@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.SignalR;
+using Notificaciones.Api.Errors;
 using Notificaciones.Api.Hubs;
 using Notificaciones.Api.Options;
 
@@ -7,12 +9,15 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<MongoOptions>(builder.Configuration.GetSection(MongoOptions.SectionName));
 builder.Services.Configure<ServiceBusOptions>(builder.Configuration.GetSection(ServiceBusOptions.SectionName));
 
-builder.Services.AddControllers();
+builder.Services.AddControllers().AddErrorResponses();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<IUserIdProvider, HeaderUserIdProvider>();
 
 var app = builder.Build();
+
+app.UseErrorResponses();
 
 if (app.Environment.IsDevelopment())
 {
