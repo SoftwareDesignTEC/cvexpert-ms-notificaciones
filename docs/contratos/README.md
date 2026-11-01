@@ -120,6 +120,8 @@ Fuente de verdad del contrato entre Notificaciones y el resto de CVExpert:
 
 ### `course.recommended`
 
+> **Pendiente de confirmar por Justin (brecha-cursos).** Los campos pueden ajustarse; cualquier cambio será agregar o volver opcionales campos, sin romper el resto.
+
 ```json
 {
   "schemaVersion": 1,
@@ -217,7 +219,7 @@ Se mantiene la numeración original para poder referirse a cada pregunta. Las re
 
 - **2. Texto de las plantillas por defecto.** El texto exacto en español e inglés se escribirá al implementar los correos.
 - **3. Paginación por cursor.** Queda por ver si más adelante hace falta paginar por cursor en vez de por `page`.
-- **5. Campos de `data`.** Andrés, Gabo y Justin deben confirmar que los campos de `data` de sus eventos son los que ellos pueden enviar.
+- **5. Campos de `data`.** Andrés (`application.status_changed`, `job.new`) y Gabo (`cv.generated`) ya confirmaron los campos de `data` de sus eventos. Solo falta que Justin confirme los de `course.recommended` (ver la nota en la sección 2).
 - **6. Valores de lista en las plantillas.** Marcadores como `{{newStatus}}`, `{{previousStatus}}`, `{{modality}}` e `{{isPaid}}` mostrarían el valor crudo (`in-progress`, `hybrid`, `true`). **Propuesta por defecto:** al renderizar, esos valores se traducen al idioma del usuario con un diccionario pequeño (por ejemplo `in-progress` → "En proceso" / "In progress", `hybrid` → "Híbrida" / "Hybrid"), en vez de mostrar el valor crudo.
 - **7. Preferencias por canal.** ¿El usuario puede apagar canales (correo, push, tiempo real) o tipos de evento? Por ahora no está en el contrato ni en el plan. Si se decide, sería un campo `preferences` en `PUT /notifications/directory/me` y el consumidor lo respetaría al enviar. Se decide con el grupo, porque toca la pantalla de configuración de notificaciones.
 
