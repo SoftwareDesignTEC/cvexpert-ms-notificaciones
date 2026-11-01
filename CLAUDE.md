@@ -7,17 +7,17 @@ CVExpert, Fase II del curso Diseño de Software (TEC). Cinco microservicios, cad
 Este repo es el microservicio de **Notificaciones**:
 - Recibe eventos de otros servicios por una cola de **Azure Service Bus**.
 - Los guarda en **MongoDB** (Cosmos DB con API de MongoDB).
-- Los entrega en tiempo real a la web con **SignalR** (`/hubs/notifications`), como push al móvil con **Firebase Cloud Messaging (FCM)** y por **correo** con plantillas editables en español e inglés.
+- Los entrega en tiempo real a la web con **SignalR** sobre **Azure SignalR Service** (hub `/notifications/hub`), como push al móvil con **Firebase Cloud Messaging (FCM)** y por **correo** con plantillas editables en español e inglés.
 - Eventos: cambio de estado de una postulación, CV generado, nueva oferta, curso recomendable.
 
 ## Stack
 
-.NET 8 (`net8.0`), ASP.NET Core Web API con controllers, `MongoDB.Driver`, `Azure.Messaging.ServiceBus`, Swashbuckle (Swagger), SignalR, pruebas con xUnit + `Microsoft.AspNetCore.Mvc.Testing`.
+.NET 8 (`net8.0`), ASP.NET Core Web API con controllers, `MongoDB.Driver`, `Azure.Messaging.ServiceBus`, Swashbuckle (Swagger), SignalR con Azure SignalR Service (`Microsoft.Azure.SignalR`, tier Free), pruebas con xUnit + `Microsoft.AspNetCore.Mvc.Testing`.
 
 ## Reglas de diseño (obligatorias)
 
 - Ningún servicio llama a otro. Solo APIM llama a este backend.
-- La identidad llega en los encabezados `X-User-Id` y `X-User-Email`; en rutas de administración también `X-User-Role`. Este servicio **no** valida tokens de Google (lo hace APIM).
+- La identidad llega en los encabezados `X-User-Id` (el `sub` del token de Google, el mismo en todos los servicios; APIM lo sobrescribe siempre) y `X-User-Email`; en rutas de administración también `X-User-Role`. Este servicio **no** valida tokens de Google (lo hace APIM). Los encabezados solo llegan cuando la operación está conectada en APIM.
 - Fechas siempre como **epoch en milisegundos UTC** (`long`), nunca como texto.
 - Ninguna URL, cadena de conexión ni credencial en el código ni en `appsettings.json`. Local: `dotnet user-secrets`. Azure: Key Vault.
 - Listas paginadas: `{ totalRecords, page, pageSize, items }`.
@@ -27,49 +27,24 @@ Este repo es el microservicio de **Notificaciones**:
 
 Todos los canales son responsabilidad de este servicio (ningún otro servicio puede enviarlos):
 
-- **Web — SignalR** (`/hubs/notifications`): solo mientras la pestaña está abierta; aviso en vivo y contador. El usuario se identifica por `X-User-Id` (`HeaderUserIdProvider`); sin ese encabezado la conexión se cierra. Enviar con `IHubContext<NotificationsHub>.Clients.User(userId)`.
+- **Web — SignalR** (hub `/notifications/hub`): solo mientras la pestaña está abierta; aviso en vivo y contador. El APIM es Consumption y no soporta WebSockets, así que se usa **Azure SignalR Service** (Free): el cliente hace `POST /notifications/hub/negotiate` por APIM (ahí llega `X-User-Id`), el backend responde con la URL del SignalR Service y un token de acceso para ese usuario, y el cliente se conecta directo al SignalR Service. La conexión **no** trae `X-User-Id`: el usuario se toma en el negotiate y viaja en el token. Enviar con `IHubContext<NotificationsHub>.Clients.User(userId)`.
 - **Móvil Android — push con FCM**: llega aunque la app esté cerrada. La app registra su token de FCM en este servicio (vía APIM).
 - **Correo**: plantillas editables en español e inglés.
 - **Historial — REST**: web y móvil consultan las mismas notificaciones guardadas en Mongo.
 
 ## Estado actual
 
-Hecho: estructura base, `/health`, formato de errores (`Errors/`), hub de SignalR con identidad por `X-User-Id`, pruebas de integración (`WebApplicationFactory`, sin Mongo ni Service Bus).
+Hecho: estructura base, `/health`, formato de errores (`Errors/`), hub de SignalR con identidad por `X-User-Id`, pruebas de integración (`WebApplicationFactory`, sin Mongo ni Service Bus), borrador del contrato en `docs/contratos/` (versión 0.1, validado).
 
-Pendiente, en este orden: consumidor de Service Bus → persistencia en Mongo → envío por SignalR → endpoints REST → FCM → correo. Al agregar el consumidor de Service Bus, las pruebas deben poder quitarlo o reemplazarlo en el factory para no conectarse a Azure.
+Desfase conocido: el código y el README de la raíz siguen con el diseño anterior del hub (`/hubs/notifications`, SignalR local, `NotificationsHub` cierra las conexiones sin `X-User-Id`). Al pasar a Azure SignalR Service hay que mover el hub a `/notifications/hub`, tomar el usuario en el negotiate (no en la conexión), quitar esa comprobación de la conexión, actualizar las pruebas y el README, y poner la cadena de conexión del SignalR Service en user-secrets / Key Vault. Las pruebas no deben conectarse a Azure SignalR.
 
-## Contratos (propuesta, pendiente de acordar con el equipo)
+Contrato: falta que el equipo lo revise (preguntas abiertas al final de `docs/contratos/README.md`) y copiar la carpeta a `cvexpert-docs/contratos` por PR.
 
-**Evento de la cola.** Como este servicio no puede consultar a otros, el evento debe traer todo lo necesario (incluido correo e idioma):
+Código pendiente, en este orden: consumidor de Service Bus → persistencia en Mongo → envío por SignalR (con el cambio a Azure SignalR Service) → endpoints REST → FCM → correo. Al agregar el consumidor de Service Bus, las pruebas deben poder quitarlo o reemplazarlo en el factory para no conectarse a Azure.
 
-```json
-{
-  "eventId": "uuid",                      // idempotencia: Service Bus entrega al menos una vez
-  "type": "postulacion.estadoCambiado",   // | cv.generado | oferta.nueva | curso.recomendado
-  "occurredAt": 1760716800000,            // epoch ms UTC
-  "userId": "usuario-1",
-  "userEmail": "ana@ejemplo.com",
-  "language": "es",                       // es | en
-  "data": { }                             // campos propios de cada tipo
-}
-```
+## Contratos
 
-**Endpoints para clientes (vía APIM):**
-
-- `GET /notifications?page&pageSize&unreadOnly` → `{ totalRecords, page, pageSize, items }`
-- `GET /notifications/unread-count`
-- `PATCH /notifications/{id}/read`, `PATCH /notifications/read-all`
-- `POST /devices` `{ token, platform: "android" }`, `DELETE /devices/{token}` (token de FCM)
-- `GET`/`PUT /admin/templates/{type}/{language}` (requiere `X-User-Role`)
-- SignalR: evento `notificacionRecibida` con la misma forma que cada elemento de `items`.
-
-**Decisiones abiertas:**
-
-1. `oferta.nueva`: ¿a quién se notifica? Este servicio no sabe qué usuarios están interesados; lo más simple es que el servicio de ofertas publique un evento por destinatario.
-2. Confirmar que `userEmail` y `language` viajan en cada evento.
-3. ¿Preferencias por canal (p. ej. apagar correos)? Si sí, `GET`/`PUT /preferences`.
-4. ¿Se guarda el texto ya armado (título y cuerpo en su idioma) o solo `type` + `data` y cada cliente lo arma?
-5. Confirmar con APIM que `X-User-Id` llega en el `negotiate` y en el handshake del WebSocket de SignalR.
+La fuente de verdad es [`docs/contratos/`](docs/contratos/): `evento-notificacion.schema.json` (mensaje de la cola `notificaciones-eventos`), `openapi.yaml` (endpoints REST) y `README.md` (cómo publicar eventos, plantillas, SignalR y preguntas abiertas). Si el código y el contrato no coinciden, manda el contrato; cualquier cambio se acuerda con el equipo y se actualiza ahí primero.
 
 ## Notas técnicas
 
@@ -83,6 +58,10 @@ Pendiente, en este orden: consumidor de Service Bus → persistencia en Mongo �
 dotnet build
 dotnet test
 dotnet run --project src/Notificaciones.Api   # Swagger en /swagger (Development)
+
+# Validar contratos (requiere Node)
+npx @redocly/cli lint docs/contratos/openapi.yaml
+npx ajv-cli validate --spec=draft2020 -c ajv-formats -s docs/contratos/evento-notificacion.schema.json -d <ejemplo>.json
 ```
 
 ## Forma de trabajo

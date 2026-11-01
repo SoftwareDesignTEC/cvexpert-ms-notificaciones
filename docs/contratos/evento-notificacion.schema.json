@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cvexpert:contratos:evento-notificacion:v1",
+  "title": "Evento de notificación (cola notificaciones-eventos)",
+  "description": "Cuerpo JSON de cada mensaje que se publica en la cola notificaciones-eventos de Azure Service Bus. Un mensaje por destinatario. El sobre es estricto; dentro de data se aceptan campos adicionales (lector tolerante), pero los obligatorios de cada tipo sí se validan.",
+  "type": "object",
+  "required": ["schemaVersion", "eventId", "type", "userId", "occurredAt", "source", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "description": "Versión de este esquema. Hoy solo existe la 1.",
+      "const": 1
+    },
+    "eventId": {
+      "description": "UUID v4 único por mensaje. Debe ser igual a la propiedad messageId del mensaje de Service Bus. El consumidor lo usa para descartar duplicados.",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "type": {
+      "description": "Tipo de evento. Debe ser igual a la propiedad subject del mensaje de Service Bus.",
+      "type": "string",
+      "enum": ["application.status_changed", "cv.generated", "job.new", "course.recommended"]
+    },
+    "userId": {
+      "description": "Id del destinatario: el mismo valor que APIM envía en X-User-Id.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "occurredAt": {
+      "description": "Momento en que ocurrió el evento, en epoch milisegundos UTC (entero).",
+      "$ref": "#/$defs/epochMillis"
+    },
+    "source": {
+      "description": "Servicio que publica el evento. Cada tipo tiene un único publicador permitido.",
+      "type": "string",
+      "enum": ["ofertas-postulaciones", "cvs", "brecha-cursos"]
+    },
+    "data": {
+      "description": "Campos propios de cada tipo de evento.",
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "title": "application.status_changed",
+      "properties": {
+        "type": { "const": "application.status_changed" },
+        "source": { "const": "ofertas-postulaciones" },
+        "data": { "$ref": "#/$defs/applicationStatusChangedData" }
+      }
+    },
+    {
+      "title": "cv.generated",
+      "properties": {
+        "type": { "const": "cv.generated" },
+        "source": { "const": "cvs" },
+        "data": { "$ref": "#/$defs/cvGeneratedData" }
+      }
+    },
+    {
+      "title": "job.new",
+      "properties": {
+        "type": { "const": "job.new" },
+        "source": { "const": "ofertas-postulaciones" },
+        "data": { "$ref": "#/$defs/jobNewData" }
+      }
+    },
+    {
+      "title": "course.recommended",
+      "properties": {
+        "type": { "const": "course.recommended" },
+        "source": { "const": "brecha-cursos" },
+        "data": { "$ref": "#/$defs/courseRecommendedData" }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "optionalString": {
+      "description": "Campo opcional: se puede omitir o enviar null.",
+      "type": ["string", "null"]
+    },
+    "idString": {
+      "description": "Identificador del recurso en el servicio que publica, siempre como texto aunque en su base sea numérico.",
+      "type": "string",
+      "minLength": 1
+    },
+    "epochMillis": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "applicationStatus": {
+      "description": "Estado de una postulación (valores de la Fase I).",
+      "type": "string",
+      "enum": ["applied", "in-progress", "interview", "rejected"]
+    },
+    "applicationStatusChangedData": {
+      "type": "object",
+      "required": ["applicationId", "jobOfferId", "jobTitle", "company", "newStatus"],
+      "additionalProperties": true,
+      "properties": {
+        "applicationId": { "$ref": "#/$defs/idString" },
+        "jobOfferId": { "$ref": "#/$defs/idString" },
+        "jobTitle": { "$ref": "#/$defs/nonEmptyString" },
+        "company": { "$ref": "#/$defs/nonEmptyString" },
+        "previousStatus": {
+          "description": "Estado anterior. Opcional: se puede omitir o enviar null (por ejemplo, en la primera transición).",
+          "anyOf": [{ "$ref": "#/$defs/applicationStatus" }, { "type": "null" }]
+        },
+        "newStatus": { "$ref": "#/$defs/applicationStatus" }
+      }
+    },
+    "cvGeneratedData": {
+      "type": "object",
+      "required": ["cvId", "title"],
+      "additionalProperties": true,
+      "properties": {
+        "cvId": { "$ref": "#/$defs/idString" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "templateId": { "$ref": "#/$defs/optionalString" }
+      }
+    },
+    "jobNewData": {
+      "type": "object",
+      "required": ["jobOfferId", "title", "company", "location", "modality", "matchScore"],
+      "additionalProperties": true,
+      "properties": {
+        "jobOfferId": { "$ref": "#/$defs/idString" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "company": { "$ref": "#/$defs/nonEmptyString" },
+        "location": { "$ref": "#/$defs/nonEmptyString" },
+        "modality": {
+          "type": "string",
+          "enum": ["remote", "on-site", "hybrid"]
+        },
+        "matchScore": {
+          "description": "Compatibilidad calculada por Ofertas, de 0 a 100. Admite decimales.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "courseRecommendedData": {
+      "type": "object",
+      "required": ["title", "platform", "url", "isPaid"],
+      "additionalProperties": true,
+      "properties": {
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "platform": { "$ref": "#/$defs/nonEmptyString" },
+        "url": {
+          "description": "Enlace absoluto al curso (http o https).",
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "isPaid": { "type": "boolean" },
+        "duration": {
+          "description": "Duración como texto para mostrar, por ejemplo \"12 horas\". Opcional: se puede omitir o enviar null.",
+          "type": ["string", "null"]
+        },
+        "skill": {
+          "description": "Habilidad que el curso ayuda a cubrir. Opcional: se puede omitir o enviar null.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

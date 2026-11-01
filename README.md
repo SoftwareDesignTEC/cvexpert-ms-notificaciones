@@ -12,8 +12,8 @@ Ninguna cadena de conexión ni credencial va en el código ni en `appsettings.js
 
 ```bash
 dotnet user-secrets --project src/Notificaciones.Api set "Mongo:ConnectionString" "mongodb://localhost:27017"
-dotnet user-secrets --project src/Notificaciones.Api set "ServiceBus:ConnectionString" "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<politica-listen>;SharedAccessKey=<clave>;EntityPath=notificaciones"
-dotnet user-secrets --project src/Notificaciones.Api set "ServiceBus:QueueName" "notificaciones"
+dotnet user-secrets --project src/Notificaciones.Api set "ServiceBus:ConnectionString" "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<politica-listen>;SharedAccessKey=<clave>;EntityPath=notificaciones-eventos"
+dotnet user-secrets --project src/Notificaciones.Api set "ServiceBus:QueueName" "notificaciones-eventos"
 
 # Ver los valores configurados
 dotnet user-secrets --project src/Notificaciones.Api list
