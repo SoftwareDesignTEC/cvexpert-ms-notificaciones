@@ -8,11 +8,11 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Notificaciones.Tests;
 
-public class ErrorResponseTests : IClassFixture<WebApplicationFactory<Program>>
+public class ErrorResponseTests : IClassFixture<NotificacionesApiFactory>
 {
     private readonly HttpClient _client;
 
-    public ErrorResponseTests(WebApplicationFactory<Program> factory)
+    public ErrorResponseTests(NotificacionesApiFactory factory)
     {
         // Agrega ErroresPruebaController (definido abajo, solo existe en las pruebas) a la API.
         _client = factory
