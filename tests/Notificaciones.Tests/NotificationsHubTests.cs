@@ -1,19 +1,57 @@
+using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Notificaciones.Api.Auth;
 using Notificaciones.Api.Hubs;
 
 namespace Notificaciones.Tests;
 
+// Con SignalR local (sin Azure:SignalR:ConnectionString). El negotiate de Azure SignalR Service, que devuelve url y
+// accessToken, solo se puede probar contra un servicio real.
 public class NotificationsHubTests : IClassFixture<NotificacionesApiFactory>
 {
+    private const string Negotiate = "/notifications/hub/negotiate?negotiateVersion=1";
     private static readonly TimeSpan Espera = TimeSpan.FromSeconds(10);
     private readonly NotificacionesApiFactory _factory;
 
     public NotificationsHubTests(NotificacionesApiFactory factory)
     {
         _factory = factory;
+    }
+
+    [Fact]
+    public async Task NegotiateSinUsuario_Responde401ConFormatoDeError()
+    {
+        var response = await _factory.CreateClient().PostAsync(Negotiate, null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(401, body.RootElement.GetProperty("status").GetInt32());
+    }
+
+    [Fact]
+    public async Task NegotiateConUsuario_Responde200()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add(ApimHeadersAuthenticationHandler.UserIdHeader, "usuario-1");
+
+        var response = await client.PostAsync(Negotiate, null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RutaAnteriorDelHub_YaNoExiste()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add(ApimHeadersAuthenticationHandler.UserIdHeader, "usuario-1");
+
+        var response = await client.PostAsync("/hubs/notifications/negotiate?negotiateVersion=1", null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
@@ -37,26 +75,23 @@ public class NotificationsHubTests : IClassFixture<NotificacionesApiFactory>
     }
 
     [Fact]
-    public async Task ConexionSinEncabezado_EsCerradaPorElServidor()
+    public async Task ConexionSinEncabezado_EsRechazada()
     {
         await using var conexion = CrearConexion(userId: null);
-        var cerrada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        conexion.Closed += _ => { cerrada.TrySetResult(); return Task.CompletedTask; };
 
-        await conexion.StartAsync();
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => conexion.StartAsync());
 
-        await cerrada.Task.WaitAsync(Espera);
-        Assert.Equal(HubConnectionState.Disconnected, conexion.State);
+        Assert.Equal(HttpStatusCode.Unauthorized, error.StatusCode);
     }
 
     // TestServer no expone WebSockets con encabezados propios, así que se usa long polling.
     private HubConnection CrearConexion(string? userId) =>
         new HubConnectionBuilder()
-            .WithUrl(new Uri(_factory.Server.BaseAddress, "hubs/notifications"), options =>
+            .WithUrl(new Uri(_factory.Server.BaseAddress, "notifications/hub"), options =>
             {
                 options.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler();
                 options.Transports = HttpTransportType.LongPolling;
-                if (userId is not null) options.Headers[HeaderUserIdProvider.UserIdHeader] = userId;
+                if (userId is not null) options.Headers[ApimHeadersAuthenticationHandler.UserIdHeader] = userId;
             })
             .Build();
 }
