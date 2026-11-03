@@ -1,7 +1,13 @@
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Options;
+using MongoDB.Driver;
 using Notificaciones.Api.Errors;
 using Notificaciones.Api.Hubs;
+using Notificaciones.Api.Infrastructure.Mongo;
+using Notificaciones.Api.Infrastructure.ServiceBus;
 using Notificaciones.Api.Options;
+using Notificaciones.Api.Services;
+using Notificaciones.Api.Services.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +20,19 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IUserIdProvider, HeaderUserIdProvider>();
+
+// Mongo se resuelve solo cuando el consumidor arranca, así la API funciona sin cadena de conexión.
+builder.Services.AddSingleton<IMongoClient>(sp =>
+    new MongoClient(sp.GetRequiredService<IOptions<MongoOptions>>().Value.ConnectionString));
+builder.Services.AddSingleton(sp =>
+    sp.GetRequiredService<IMongoClient>().GetDatabase(sp.GetRequiredService<IOptions<MongoOptions>>().Value.Database));
+builder.Services.AddSingleton<INotificationRepository, MongoNotificationRepository>();
+
+// Consumidor de la cola de eventos.
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<INotificationDispatcher, NullNotificationDispatcher>();
+builder.Services.AddSingleton<NotificationEventHandler>();
+builder.Services.AddHostedService<NotificationEventsConsumer>();
 
 var app = builder.Build();
 

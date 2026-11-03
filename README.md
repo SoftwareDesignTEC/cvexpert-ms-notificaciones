@@ -10,6 +10,15 @@ Microservicio de **Notificaciones** de CVExpert. Consume eventos de otros servic
 
 Ninguna cadena de conexión ni credencial va en el código ni en `appsettings.json`. En local se usan `dotnet user-secrets`; en Azure, Key Vault.
 
+| Clave | Para qué | Si falta |
+|---|---|---|
+| `Mongo:ConnectionString` | Cadena de conexión de MongoDB / Cosmos DB | El consumidor de la cola no arranca |
+| `Mongo:Database` | Base de datos (por defecto `notificaciones`, en `appsettings.json`) | El consumidor de la cola no arranca |
+| `ServiceBus:ConnectionString` | Cadena SAS de la cola, solo **Listen** | El consumidor de la cola no arranca |
+| `ServiceBus:QueueName` | Nombre de la cola: `notificaciones-eventos` | El consumidor de la cola no arranca |
+
+Sin alguna de estas claves, la API sigue funcionando; solo se registra una advertencia y no se consumen eventos.
+
 ```bash
 dotnet user-secrets --project src/Notificaciones.Api set "Mongo:ConnectionString" "mongodb://localhost:27017"
 dotnet user-secrets --project src/Notificaciones.Api set "ServiceBus:ConnectionString" "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<politica-listen>;SharedAccessKey=<clave>;EntityPath=notificaciones-eventos"
@@ -23,6 +32,18 @@ Los valores anteriores son de ejemplo; pide los reales al equipo.
 
 - Para Service Bus usa una política de acceso compartido **de la cola**, solo con permiso **Listen**. No uses `RootManageSharedAccessKey`: da control total sobre todo el namespace. Si la cadena incluye `EntityPath`, debe coincidir con `ServiceBus:QueueName`.
 - En Cosmos DB con API de MongoDB la cadena de conexión debe llevar `retryWrites=false`.
+- En Azure las mismas claves van en Key Vault con `--` en lugar de `:` (por ejemplo `ServiceBus--ConnectionString`).
+
+## Consumidor de la cola
+
+`NotificationEventsConsumer` lee la cola `notificaciones-eventos` (PeekLock, hasta 4 mensajes a la vez) y por cada mensaje:
+
+1. Lo valida contra [`docs/contratos/evento-notificacion.schema.json`](docs/contratos/evento-notificacion.schema.json). Si no es JSON válido o no cumple el esquema, lo manda a la dead-letter sin reintentar (`InvalidJson` o `SchemaValidationFailed`, con el detalle en la descripción).
+2. Lo guarda en la colección `notifications`. Si el `eventId` ya existe es un duplicado: se completa sin hacer nada más.
+3. Lo entrega por los canales (`INotificationDispatcher`; por ahora vacío). Si la entrega falla, el mensaje se completa igual porque ya está guardado.
+4. Si Mongo falla, espera 5 s y abandona el mensaje para que Service Bus lo reintente; al agotar `MaxDeliveryCount`, Service Bus lo pasa a la dead-letter.
+
+Al arrancar crea los índices de `notifications` (`eventId` único y `userId` + `createdAt` descendente) y no consume hasta tenerlos. En Cosmos DB el índice único solo se puede crear con la colección vacía.
 
 ## Correr el servicio
 
@@ -40,7 +61,7 @@ dotnet run --project src/Notificaciones.Api
 dotnet test
 ```
 
-Las pruebas de integración levantan la API en memoria (`WebApplicationFactory`), sin Mongo ni Service Bus.
+Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactory`, que quita el consumidor de la cola), sin Mongo ni Service Bus. El validador y el handler del consumidor se prueban con dobles.
 
 ### Prueba manual
 
@@ -71,10 +92,10 @@ cvexpert-ms-notificaciones/
 │   ├── Controllers/       # Endpoints HTTP (HealthController)
 │   ├── Errors/            # Formato único de errores { status, message, errors? }
 │   ├── Hubs/              # Hub de SignalR e identificación del usuario por X-User-Id
-│   ├── Domain/            # Modelos de dominio
-│   ├── Infrastructure/    # Acceso a MongoDB y Service Bus
+│   ├── Domain/            # Modelos de dominio (Notification)
+│   ├── Infrastructure/    # MongoDB (repositorio) y Service Bus (consumidor de la cola)
 │   ├── Options/           # Clases de configuración (patrón Options)
-│   ├── Services/          # Lógica de negocio
+│   ├── Services/          # Lógica de negocio: validación y manejo de eventos, interfaces de persistencia y entrega
 │   ├── Program.cs
 │   ├── appsettings.json
 │   └── appsettings.Development.json

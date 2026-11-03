@@ -1,14 +1,13 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Notificaciones.Tests;
 
-public class HealthControllerTests : IClassFixture<WebApplicationFactory<Program>>
+public class HealthControllerTests : IClassFixture<NotificacionesApiFactory>
 {
     private readonly HttpClient _client;
 
-    public HealthControllerTests(WebApplicationFactory<Program> factory)
+    public HealthControllerTests(NotificacionesApiFactory factory)
     {
         _client = factory.CreateClient();
     }

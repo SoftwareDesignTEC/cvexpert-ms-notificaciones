@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Http.Connections;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,12 +6,12 @@ using Notificaciones.Api.Hubs;
 
 namespace Notificaciones.Tests;
 
-public class NotificationsHubTests : IClassFixture<WebApplicationFactory<Program>>
+public class NotificationsHubTests : IClassFixture<NotificacionesApiFactory>
 {
     private static readonly TimeSpan Espera = TimeSpan.FromSeconds(10);
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly NotificacionesApiFactory _factory;
 
-    public NotificationsHubTests(WebApplicationFactory<Program> factory)
+    public NotificationsHubTests(NotificacionesApiFactory factory)
     {
         _factory = factory;
     }
