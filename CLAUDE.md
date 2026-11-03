@@ -34,13 +34,15 @@ Todos los canales son responsabilidad de este servicio (ningún otro servicio pu
 
 ## Estado actual
 
-Hecho: estructura base, `/health`, formato de errores (`Errors/`), hub de SignalR con identidad por `X-User-Id`, pruebas de integración (`WebApplicationFactory`, sin Mongo ni Service Bus), borrador del contrato en `docs/contratos/` (versión 0.1, validado).
+Hecho: estructura base, `/health`, formato de errores (`Errors/`), hub de SignalR con identidad por `X-User-Id`, pruebas de integración (`NotificacionesApiFactory`, sin Mongo ni Service Bus), borrador del contrato en `docs/contratos/` (versión 0.1, validado), consumidor de la cola con persistencia en Mongo (PR #3).
+
+Consumidor (`Infrastructure/ServiceBus/NotificationEventsConsumer.cs`): valida con `NotificationEventValidator` (escrito a mano: si cambia el esquema, cambiarlo también ahí y en sus pruebas), guarda en `notifications` (índice único `eventId` para deduplicar; `userId` + `createdAt` desc) y llama a `INotificationDispatcher`, que por ahora es `NullNotificationDispatcher`. Inválido → dead-letter; duplicado → completa; Mongo caído → abandona tras 5 s; fallo del dispatcher → completa igual. Sin `ServiceBus:*` o `Mongo:*` no arranca y la API sigue funcionando. `NotificacionesApiFactory` lo quita en las pruebas de integración. Falta probarlo contra Cosmos y Service Bus reales (en especial que un `eventId` repetido llegue como `DuplicateKey`).
 
 Desfase conocido: el código y el README de la raíz siguen con el diseño anterior del hub (`/hubs/notifications`, SignalR local, `NotificationsHub` cierra las conexiones sin `X-User-Id`). Al pasar a Azure SignalR Service hay que mover el hub a `/notifications/hub`, tomar el usuario en el negotiate (no en la conexión), quitar esa comprobación de la conexión, actualizar las pruebas y el README, y poner la cadena de conexión del SignalR Service en user-secrets / Key Vault. Las pruebas no deben conectarse a Azure SignalR.
 
-Contrato: falta que el equipo lo revise (preguntas abiertas al final de `docs/contratos/README.md`) y copiar la carpeta a `cvexpert-docs/contratos` por PR.
+Contrato: en `main` (PR #2). Andrés y Gabo confirmaron los campos de `data` de sus eventos; falta que Justin confirme `course.recommended` (y quedan las demás preguntas abiertas al final de `docs/contratos/README.md`). Las copias en `cvexpert-docs` las mantiene Justin en su rama de consolidación (`contratos/notificaciones.yaml`, `eventos/`, `docs/fuentes.md`); este repo no les abre PR, solo se le avisa el commit de origen cuando cambie el contrato.
 
-Código pendiente, en este orden: consumidor de Service Bus → persistencia en Mongo → envío por SignalR (con el cambio a Azure SignalR Service) → endpoints REST → FCM → correo. Al agregar el consumidor de Service Bus, las pruebas deben poder quitarlo o reemplazarlo en el factory para no conectarse a Azure.
+Código pendiente, en este orden: envío por SignalR (con el cambio a Azure SignalR Service; implementar `INotificationDispatcher`) → endpoints REST → FCM → correo.
 
 ## Contratos
 
