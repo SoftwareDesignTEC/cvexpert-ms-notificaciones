@@ -1,0 +1,70 @@
+name: CI/CD Notificaciones
+
+# PR hacia main: solo compila y prueba. Push a main o lanzamiento manual (desde cualquier rama): además despliega.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restaurar
+        run: dotnet restore
+
+      - name: Compilar
+        run: dotnet build --no-restore -c Release
+
+      # Sin secretos: las pruebas no se conectan a Mongo, Service Bus ni Azure SignalR.
+      - name: Probar
+        run: dotnet test --no-build -c Release --verbosity normal
+
+      - name: Publicar
+        run: dotnet publish src/Notificaciones.Api -c Release --no-build -o ${{ runner.temp }}/publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notificaciones-api
+          path: ${{ runner.temp }}/publish
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # En el job y no en el workflow: así un PR no cancela un despliegue que espera en cola
+    # (GitHub deja solo uno en espera por grupo) y los PR no esperan a que termine un despliegue.
+    concurrency:
+      group: deploy-notificaciones
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: notificaciones-api
+          path: ${{ runner.temp }}/publish
+
+      # La configuración (cadenas de Mongo, Service Bus y SignalR) vive en el App Service y en Key Vault, no aquí.
+      - name: Desplegar en App Service
+        id: deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: cvexpert-notificaciones
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ${{ runner.temp }}/publish
+
+      # --retry-all-errors cubre también el arranque en frío (conexión rechazada o 503); -L sigue la redirección a HTTPS.
+      - name: Comprobar /health
+        env:
+          WEBAPP_URL: ${{ steps.deploy.outputs.webapp-url }}
+        run: curl --fail --silent --show-error --location --retry 5 --retry-delay 10 --retry-all-errors --max-time 30 "${WEBAPP_URL%/}/health"
