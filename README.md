@@ -124,6 +124,16 @@ cvexpert-ms-notificaciones/
 └── tests/Notificaciones.Tests/   # Pruebas xUnit
 ```
 
+## CI/CD
+
+El workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (**CI/CD Notificaciones**) corre en GitHub Actions:
+
+- **En cada PR hacia `main`:** restaura, compila en Release, corre las pruebas y publica el artefacto. No despliega.
+- **En cada push a `main`** (al fusionar un PR): lo mismo y además despliega en el App Service `cvexpert-notificaciones` y comprueba que `/health` responda 200.
+- **A mano:** desde la pestaña Actions → *CI/CD Notificaciones* → *Run workflow*, eligiendo la rama. Sirve para probar una rama en Azure antes de fusionarla, pero despliega sobre el mismo App Service: esa versión queda publicada hasta el siguiente despliegue de `main`.
+
+Los despliegues nunca corren dos a la vez. El único secreto del repo es `AZURE_WEBAPP_PUBLISH_PROFILE`. La configuración (`Mongo__*`, `ServiceBus__*`, `Azure__SignalR__ConnectionString`) vive en el App Service y en Key Vault (`kv-cvexpert`), no en el repo ni en el workflow; las pruebas no la necesitan.
+
 ## Forma de trabajo
 
 - `main` está protegida: no se hace push directo.
