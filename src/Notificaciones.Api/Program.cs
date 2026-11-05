@@ -32,12 +32,16 @@ var useAzureSignalR = !string.IsNullOrWhiteSpace(azureSignalRConnectionString);
 var signalR = builder.Services.AddSignalR();
 if (useAzureSignalR) signalR.AddAzureSignalR(azureSignalRConnectionString!);
 
-// Mongo se resuelve solo cuando el consumidor arranca, así la API funciona sin cadena de conexión.
+// Mongo se resuelve la primera vez que se usa, así la API arranca sin cadena de conexión.
 builder.Services.AddSingleton<IMongoClient>(sp =>
     new MongoClient(sp.GetRequiredService<IOptions<MongoOptions>>().Value.ConnectionString));
 builder.Services.AddSingleton(sp =>
     sp.GetRequiredService<IMongoClient>().GetDatabase(sp.GetRequiredService<IOptions<MongoOptions>>().Value.Database));
 builder.Services.AddSingleton<INotificationRepository, MongoNotificationRepository>();
+builder.Services.AddSingleton<IDirectoryRepository, MongoDirectoryRepository>();
+builder.Services.AddSingleton<IDeviceRepository, MongoDeviceRepository>();
+builder.Services.AddSingleton<MongoIndexInitializer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MongoIndexInitializer>());
 
 // Consumidor de la cola de eventos y entrega por los canales.
 builder.Services.AddSingleton(TimeProvider.System);

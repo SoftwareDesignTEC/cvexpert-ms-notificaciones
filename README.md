@@ -45,7 +45,33 @@ Los valores anteriores son de ejemplo; pide los reales al equipo.
 3. Lo entrega por los canales (`INotificationDispatcher`; por ahora solo tiempo real con SignalR). Si la entrega falla, el mensaje se completa igual porque ya está guardado.
 4. Si Mongo falla, espera 5 s y abandona el mensaje para que Service Bus lo reintente; al agotar `MaxDeliveryCount`, Service Bus lo pasa a la dead-letter.
 
-Al arrancar crea los índices de `notifications` (`eventId` único y `userId` + `createdAt` descendente) y no consume hasta tenerlos. En Cosmos DB el índice único solo se puede crear con la colección vacía.
+No consume hasta que existan los índices (ver "Colecciones e índices"): sin el índice único de `eventId` no hay deduplicación.
+
+## Colecciones e índices
+
+`MongoIndexInitializer` crea los índices al arrancar, siempre que `Mongo:*` esté configurado, y reintenta cada 30 s si Mongo no responde. En Cosmos DB un índice único solo se puede crear con la colección vacía, así que el servicio debe arrancar antes de que haya datos.
+
+| Colección | Documento | Índices |
+|---|---|---|
+| `notifications` | `eventId`, `userId`, `type`, `source`, `data`, `occurredAt`, `createdAt`, `readAt` | `eventId` único; `userId` + `createdAt` desc; `userId` + `readAt` |
+| `directory` | `_id` = userId, `email`, `language`, `updatedAt` | solo `_id` |
+| `devices` | `token`, `userId`, `platform`, `registeredAt` | `token` único; `userId` |
+
+## Endpoints REST
+
+Todos requieren `X-User-Id` (si falta, 401) y solo ven o modifican datos de ese usuario. El usuario nunca sale del cuerpo ni de la ruta. La fuente de verdad de rutas, cuerpos y respuestas es [`docs/contratos/openapi.yaml`](docs/contratos/openapi.yaml).
+
+| Ruta | Qué hace |
+|---|---|
+| `PUT /notifications/directory/me` | `{ language: "es" \| "en" }`. Guarda el idioma y el correo de `X-User-Email` (sin ese encabezado, 401). 200 con `{ userId, email, language }`. |
+| `POST /notifications/devices` | `{ token, platform: "android" }`. 201 si el token es nuevo; 200 si ya existía (si era de otro usuario, pasa al actual). |
+| `DELETE /notifications/devices/{token}` | 204 siempre. Solo quita el token si es del usuario. El token va codificado para URL. |
+| `GET /notifications?page&pageSize&unread` | Más recientes primero, como `{ totalRecords, page, pageSize, items }`. `page` ≥ 1 y `pageSize` de 1 a 100 (por defecto 1 y 10); fuera de rango, 400. `unread=true` solo no leídas, `false` solo leídas. |
+| `GET /notifications/unread-count` | `{ count }`. |
+| `PATCH /notifications/{id}/read` | 200 con la notificación. Si ya estaba leída conserva su `readAt`. 404 si no existe o es de otro usuario. |
+| `POST /notifications/read-all` | 204. Marca como leídas todas las del usuario. |
+
+`title` y `body` de cada notificación se arman al responder, en el idioma del usuario según el directorio (`es` si no está registrado).
 
 ## Tiempo real (SignalR)
 
@@ -55,7 +81,7 @@ El APIM es Consumption y no soporta WebSockets, así que se usa **Azure SignalR 
 2. **Conexión (directa).** El cliente se conecta al SignalR Service con esa `url` y ese token, sin pasar por APIM ni por este backend. La identidad viaja dentro del token.
 3. **Envío.** Cuando llega una notificación, `SignalRNotificationDispatcher` invoca `notification` en las conexiones del usuario (`IHubContext<NotificationsHub>.Clients.User(userId)`). El argumento tiene la misma forma que un item de `GET /notifications` (`id`, `type`, `title`, `body`, `data`, `read`, `createdAt`).
 
-`title` y `body` se arman al enviar, con textos por defecto por tipo e idioma (`DefaultNotificationRenderer`); por ahora siempre en español, hasta que exista el directorio de usuarios. Se reemplazarán por las plantillas editables.
+`title` y `body` se arman al enviar, en el idioma del directorio (`es` si el usuario no está registrado), con textos por defecto por tipo e idioma (`DefaultNotificationRenderer`). Se reemplazarán por las plantillas editables.
 
 Sin `Azure:SignalR:ConnectionString` el hub funciona en modo local (el negotiate devuelve un `connectionToken` en vez de `url` y `accessToken`): sirve para desarrollar y probar, pero no detrás de APIM.
 
@@ -77,7 +103,7 @@ dotnet run --project src/Notificaciones.Api
 dotnet test
 ```
 
-Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactory`, que quita el consumidor de la cola y fuerza SignalR local), sin Mongo, Service Bus ni Azure SignalR, aunque haya user-secrets configurados. El validador, el handler del consumidor y el dispatcher de SignalR se prueban con dobles.
+Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactory`, que quita el consumidor de la cola, usa repositorios en memoria y fuerza SignalR local), sin Mongo, Service Bus ni Azure SignalR, aunque haya user-secrets configurados. El validador, el handler del consumidor y el dispatcher de SignalR se prueban con dobles. Las consultas reales a Mongo (`Infrastructure/Mongo/`) no tienen pruebas automáticas.
 
 ### Prueba manual
 
@@ -90,8 +116,12 @@ curl -i http://localhost:5029/health
 # 404 { "status": 404, "message": "Not Found" }
 curl -i http://localhost:5029/no-existe
 
-# SignalR sin X-User-Id: 401 { "status": 401, "message": "Unauthorized" }
+# SignalR sin X-User-Id: 401 { "status": 401, "message": "Falta el encabezado X-User-Id." }
 curl -i -X POST "http://localhost:5029/notifications/hub/negotiate?negotiateVersion=1"
+
+# Centro de notificaciones (necesita Mongo configurado)
+curl -i "http://localhost:5029/notifications?page=1&pageSize=10" -H "X-User-Id: usuario-1"
+curl -i -X PUT http://localhost:5029/notifications/directory/me -H "X-User-Id: usuario-1" -H "X-User-Email: ana@ejemplo.com" -H "Content-Type: application/json" -d '{"language":"en"}'
 
 # SignalR con X-User-Id (en producción lo agrega APIM): 200; en local trae connectionToken, con Azure trae url y accessToken
 curl -i -X POST "http://localhost:5029/notifications/hub/negotiate?negotiateVersion=1" -H "X-User-Id: usuario-1"
@@ -100,7 +130,8 @@ curl -i -X POST "http://localhost:5029/notifications/hub/negotiate?negotiateVers
 ## Convenciones de la API
 
 - **Errores**: siempre `{ status, message, errors? }`; `errors` (`{ campo: mensaje }`) solo aparece en 400.
-- **Identidad**: esquema `ApimHeaders` a partir de `X-User-Id`, `X-User-Email` y `X-User-Role`. Las rutas de usuario llevan `[Authorize]` y responden 401 sin `X-User-Id`.
+- **Identidad**: esquema `ApimHeaders` a partir de `X-User-Id`, `X-User-Email` y `X-User-Role`. Las rutas de usuario llevan `[Authorize]`, responden 401 sin `X-User-Id` y leen el usuario con `User.GetUserId()`.
+- **Paginación**: `{ totalRecords, page, pageSize, items }`.
 - **SignalR**: hub `/notifications/hub` con `[Authorize]`; mensaje `notification` con la forma de un item de `GET /notifications`. Para enviarle algo a un usuario: `IHubContext<NotificationsHub>.Clients.User(userId)`.
 
 ## Estructura
@@ -111,11 +142,11 @@ cvexpert-ms-notificaciones/
 ├── src/Notificaciones.Api/
 │   ├── Auth/              # Autenticación por los encabezados de APIM (esquema ApimHeaders)
 │   ├── Contracts/         # Formas de respuesta del contrato (NotificationResponse)
-│   ├── Controllers/       # Endpoints HTTP (HealthController)
+│   ├── Controllers/       # Endpoints HTTP: salud, directorio, dispositivos y centro de notificaciones
 │   ├── Errors/            # Formato único de errores { status, message, errors? }
 │   ├── Hubs/              # Hub de SignalR y entrega en tiempo real (SignalRNotificationDispatcher)
-│   ├── Domain/            # Modelos de dominio (Notification)
-│   ├── Infrastructure/    # MongoDB (repositorio) y Service Bus (consumidor de la cola)
+│   ├── Domain/            # Documentos de Mongo (Notification, DirectoryEntry, Device)
+│   ├── Infrastructure/    # MongoDB (repositorios e índices) y Service Bus (consumidor de la cola)
 │   ├── Options/           # Clases de configuración (patrón Options)
 │   ├── Services/          # Lógica de negocio: eventos de la cola, textos de las notificaciones, interfaces de persistencia y entrega
 │   ├── Program.cs

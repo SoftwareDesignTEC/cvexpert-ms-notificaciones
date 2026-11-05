@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
+using Notificaciones.Api.Errors;
 
 namespace Notificaciones.Api.Auth;
 
@@ -37,4 +38,19 @@ public class ApimHeadersAuthenticationHandler(
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
         return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name)));
     }
+
+    /// <summary>401 con el formato de errores y el mensaje del contrato.</summary>
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties)
+    {
+        Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return Response.WriteAsJsonAsync(new ErrorResponse(StatusCodes.Status401Unauthorized, $"Falta el encabezado {UserIdHeader}."));
+    }
+}
+
+public static class ClaimsPrincipalExtensions
+{
+    /// <summary>Usuario autenticado (valor de <c>X-User-Id</c>). Solo para rutas con [Authorize].</summary>
+    public static string GetUserId(this ClaimsPrincipal user) =>
+        user.FindFirstValue(ClaimTypes.NameIdentifier)
+        ?? throw new InvalidOperationException("La ruta no exige autenticación: falta [Authorize].");
 }

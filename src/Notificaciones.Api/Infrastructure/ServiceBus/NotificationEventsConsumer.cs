@@ -1,7 +1,7 @@
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Options;
+using Notificaciones.Api.Infrastructure.Mongo;
 using Notificaciones.Api.Options;
-using Notificaciones.Api.Services;
 using Notificaciones.Api.Services.Events;
 
 namespace Notificaciones.Api.Infrastructure.ServiceBus;
@@ -13,11 +13,11 @@ namespace Notificaciones.Api.Infrastructure.ServiceBus;
 public class NotificationEventsConsumer(
     IOptions<ServiceBusOptions> serviceBusOptions,
     IOptions<MongoOptions> mongoOptions,
+    MongoIndexInitializer indexes,
     IServiceProvider services,
     ILogger<NotificationEventsConsumer> logger) : BackgroundService
 {
     private const int MaxConcurrentCalls = 4;
-    private static readonly TimeSpan IndexRetryDelay = TimeSpan.FromSeconds(30);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -40,7 +40,7 @@ public class NotificationEventsConsumer(
         try
         {
             // Sin el índice único de eventId no hay deduplicación: no se consume hasta tenerlo.
-            await EnsureIndexesAsync(services.GetRequiredService<INotificationRepository>(), stoppingToken);
+            await indexes.WaitUntilReadyAsync(stoppingToken);
 
             var handler = services.GetRequiredService<NotificationEventHandler>();
             await using var client = new ServiceBusClient(serviceBus.ConnectionString);
@@ -77,23 +77,6 @@ public class NotificationEventsConsumer(
         catch (Exception ex)
         {
             logger.LogError(ex, "El consumidor de la cola se detuvo por un error; la API sigue funcionando");
-        }
-    }
-
-    private async Task EnsureIndexesAsync(INotificationRepository repository, CancellationToken stoppingToken)
-    {
-        while (true)
-        {
-            try
-            {
-                await repository.EnsureIndexesAsync(stoppingToken);
-                return;
-            }
-            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-            {
-                logger.LogError(ex, "No se pudieron crear los índices de MongoDB; se reintenta en {RetryDelay}", IndexRetryDelay);
-                await Task.Delay(IndexRetryDelay, stoppingToken);
-            }
         }
     }
 }
