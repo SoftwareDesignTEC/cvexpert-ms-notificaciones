@@ -52,6 +52,9 @@ public class MongoDeviceRepository(IMongoDatabase database) : IDeviceRepository
         return new DeviceRegistrationResult(existing, Created: false);
     }
 
+    public async Task<IReadOnlyList<string>> ListTokensAsync(string userId, CancellationToken cancellationToken) =>
+        await _collection.Find(d => d.UserId == userId).Project(d => d.Token).ToListAsync(cancellationToken);
+
     public Task DeleteAsync(string userId, string token, CancellationToken cancellationToken) =>
         _collection.DeleteOneAsync(d => d.Token == token && d.UserId == userId, cancellationToken);
 }

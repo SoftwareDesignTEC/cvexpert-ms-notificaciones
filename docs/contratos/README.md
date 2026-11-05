@@ -6,7 +6,7 @@ Fuente de verdad del contrato entre Notificaciones y el resto de CVExpert:
 |---|---|---|
 | [`evento-notificacion.schema.json`](evento-notificacion.schema.json) | Mensaje de la cola de Service Bus (JSON Schema 2020-12) | Quien publica eventos: Ofertas y Postulaciones, CVs, Brecha y Cursos |
 | [`openapi.yaml`](openapi.yaml) | Endpoints REST (OpenAPI 3.0) | APIM y clientes web y Android |
-| Este README | Cómo publicar un evento, ejemplos, plantillas y tiempo real | Todos |
+| Este README | Cómo publicar un evento, ejemplos, plantillas, tiempo real y push | Todos |
 
 ## 1. Cómo publicar un evento
 
@@ -213,7 +213,29 @@ await connection.start();
 
 `accessTokenFactory` solo autentica el negotiate ante APIM. Para conectarse al SignalR Service, la librería usa el `accessToken` que devuelve el negotiate.
 
-## 6. Preguntas abiertas
+## 6. Push (FCM)
+
+La app de Android registra su token de FCM con `POST /notifications/devices` al iniciar sesión (y cada vez que FCM le entregue uno nuevo) y lo quita con `DELETE /notifications/devices/{token}` al cerrar sesión. Cuando llega una notificación, Notificaciones envía un mensaje a **todos** los tokens del usuario:
+
+```json
+{
+  "notification": {
+    "title": "Tu postulación cambió de estado",
+    "body": "Tu postulación a Desarrollador Backend en Acme cambió a \"Entrevista\"."
+  },
+  "data": {
+    "notificationId": "6711a2f0c3e4b5a6d7e8f901",
+    "type": "application.status_changed"
+  }
+}
+```
+
+- **`notification`:** con la app cerrada o en segundo plano, Android muestra el aviso con ese `title` y ese `body`. Están en el idioma del usuario según el directorio (en español si no está registrado).
+- **`data`:** los valores siempre son texto. `notificationId` es el mismo `id` de `GET /notifications`. Al tocar el aviso, la app puede abrir el centro de notificaciones y marcarla como leída con `PATCH /notifications/{id}/read`.
+- Con la app en primer plano, Android no muestra el aviso: lo recibe `FirebaseMessagingService.onMessageReceived` y la app decide qué hacer.
+- Si FCM responde que un token ya no es válido (`Unregistered`, por ejemplo porque se desinstaló la app), Notificaciones lo borra. Al reinstalar, la app debe volver a registrarlo.
+
+## 7. Preguntas abiertas
 
 Se mantiene la numeración original para poder referirse a cada pregunta. Las resueltas están al final.
 

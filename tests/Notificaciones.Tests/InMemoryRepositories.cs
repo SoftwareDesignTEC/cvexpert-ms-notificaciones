@@ -114,6 +114,14 @@ public class InMemoryDeviceRepository : IDeviceRepository
         }
     }
 
+    public Task<IReadOnlyList<string>> ListTokensAsync(string userId, CancellationToken cancellationToken)
+    {
+        lock (_lock)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(_byToken.Values.Where(d => d.UserId == userId).Select(d => d.Token).ToList());
+        }
+    }
+
     public Task DeleteAsync(string userId, string token, CancellationToken cancellationToken)
     {
         lock (_lock)
