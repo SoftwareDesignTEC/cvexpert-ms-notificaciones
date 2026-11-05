@@ -11,11 +11,12 @@ namespace Notificaciones.Tests;
 public class SignalRNotificationDispatcherTests
 {
     private readonly HubFalso _hub = new();
+    private readonly InMemoryDirectoryRepository _directorio = new();
     private readonly SignalRNotificationDispatcher _dispatcher;
 
     public SignalRNotificationDispatcherTests()
     {
-        _dispatcher = new SignalRNotificationDispatcher(_hub, new DefaultNotificationRenderer());
+        _dispatcher = new SignalRNotificationDispatcher(_hub, _directorio, new DefaultNotificationRenderer());
     }
 
     private static Notification Notificacion() => new()
@@ -57,6 +58,19 @@ public class SignalRNotificationDispatcherTests
         Assert.False(payload.Read);
         Assert.Equal(1760720400000, payload.CreatedAt);
         Assert.Null(payload.ReadAt);
+    }
+
+    [Fact]
+    public async Task UsuarioConInglesEnElDirectorio_RecibeLosTextosEnIngles()
+    {
+        await _directorio.UpsertAsync(
+            new DirectoryEntry { UserId = "usuario-1", Email = "ana@ejemplo.com", Language = "en" }, CancellationToken.None);
+
+        await _dispatcher.DispatchAsync(Notificacion(), CancellationToken.None);
+
+        var payload = Assert.IsType<NotificationResponse>(Assert.Single(Assert.Single(_hub.Envios).Argumentos));
+        Assert.Equal("Your application was updated", payload.Title);
+        Assert.Equal("Your application for Desarrollador .NET at Acme changed to \"Interview\".", payload.Body);
     }
 
     [Fact]

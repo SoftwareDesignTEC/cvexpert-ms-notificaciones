@@ -157,6 +157,14 @@ public class NotificationEventHandlerTests
             if (Resultado == InsertResult.Inserted) Guardadas.Add(notification);
             return Task.FromResult(Resultado);
         }
+
+        // El handler solo guarda.
+        public Task<Page<Notification>> ListAsync(string userId, bool? unread, int page, int pageSize, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<long> CountUnreadAsync(string userId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<Notification?> MarkReadAsync(string id, string userId, long readAt, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task MarkAllReadAsync(string userId, long readAt, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class DespachadorFalso : INotificationDispatcher
