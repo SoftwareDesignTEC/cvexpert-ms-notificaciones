@@ -120,8 +120,6 @@ Fuente de verdad del contrato entre Notificaciones y el resto de CVExpert:
 
 ### `course.recommended`
 
-> **Pendiente de confirmar por Justin (brecha-cursos).** Los campos pueden ajustarse; cualquier cambio será agregar o volver opcionales campos, sin romper el resto.
-
 ```json
 {
   "schemaVersion": 1,
@@ -241,7 +239,6 @@ Se mantiene la numeración original para poder referirse a cada pregunta. Las re
 
 - **2. Texto de las plantillas por defecto.** El texto exacto en español e inglés se escribirá al implementar los correos.
 - **3. Paginación por cursor.** Queda por ver si más adelante hace falta paginar por cursor en vez de por `page`.
-- **5. Campos de `data`.** Andrés (`application.status_changed`, `job.new`) y Gabo (`cv.generated`) ya confirmaron los campos de `data` de sus eventos. Solo falta que Justin confirme los de `course.recommended` (ver la nota en la sección 2).
 - **6. Valores de lista en las plantillas.** Marcadores como `{{newStatus}}`, `{{previousStatus}}`, `{{modality}}` e `{{isPaid}}` mostrarían el valor crudo (`in-progress`, `hybrid`, `true`). **Propuesta por defecto:** al renderizar, esos valores se traducen al idioma del usuario con un diccionario pequeño (por ejemplo `in-progress` → "En proceso" / "In progress", `hybrid` → "Híbrida" / "Hybrid"), en vez de mostrar el valor crudo.
 - **7. Preferencias por canal.** ¿El usuario puede apagar canales (correo, push, tiempo real) o tipos de evento? Por ahora no está en el contrato ni en el plan. Si se decide, sería un campo `preferences` en `PUT /notifications/directory/me` y el consumidor lo respetaría al enviar. Se decide con el grupo, porque toca la pantalla de configuración de notificaciones.
 
@@ -249,4 +246,5 @@ Se mantiene la numeración original para poder referirse a cada pregunta. Las re
 
 - **1. WebSockets en APIM.** El APIM es tier Consumption y no soporta WebSockets. Se usará Azure SignalR Service (Free): el negotiate pasa por APIM y la conexión va directa al SignalR Service (sección 5).
 - **4. Mismo `X-User-Id` en todos los servicios.** `X-User-Id` es el `sub` del token de Google y es el mismo valor en todos los servicios. APIM lo sobrescribe siempre, así que un cliente no puede suplantarlo enviándolo él mismo. Los encabezados de identidad solo llegan al backend cuando se conecten las operaciones de Notificaciones en APIM.
+- **5. Campos de `data`.** Todos los productores confirmaron sus campos; Justin confirmó `course.recommended` el 2026-11-05.
 - **8. `X-User-Id` en SignalR.** Queda cerrada con la 1: `X-User-Id` solo hace falta en el negotiate, que pasa por APIM. La conexión al SignalR Service se identifica con el `accessToken` que entrega el negotiate.
