@@ -17,6 +17,9 @@ Ninguna cadena de conexión ni credencial va en el código ni en `appsettings.js
 | `ServiceBus:ConnectionString` | Cadena SAS de la cola, solo **Listen** | El consumidor de la cola no arranca |
 | `ServiceBus:QueueName` | Nombre de la cola: `notificaciones-eventos` | El consumidor de la cola no arranca |
 | `Azure:SignalR:ConnectionString` | Cadena de Azure SignalR Service (tiempo real) | Se usa SignalR local (solo sirve para desarrollo y pruebas) |
+| `Firebase:ServiceAccountJson` | JSON completo de la service account de Firebase (push a Android) | Push desactivado |
+| `Acs:ConnectionString` | Cadena de Azure Communication Services (correo) | Correo desactivado |
+| `Email:Sender` | Remitente de un dominio verificado en ACS, por ejemplo `DoNotReply@<dominio>.azurecomm.net`. No es secreto | Correo desactivado |
 
 Sin alguna de estas claves, la API sigue funcionando; solo se registra una advertencia.
 
@@ -25,6 +28,8 @@ dotnet user-secrets --project src/Notificaciones.Api set "Mongo:ConnectionString
 dotnet user-secrets --project src/Notificaciones.Api set "ServiceBus:ConnectionString" "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<politica-listen>;SharedAccessKey=<clave>;EntityPath=notificaciones-eventos"
 dotnet user-secrets --project src/Notificaciones.Api set "ServiceBus:QueueName" "notificaciones-eventos"
 dotnet user-secrets --project src/Notificaciones.Api set "Azure:SignalR:ConnectionString" "Endpoint=https://<recurso>.service.signalr.net;AccessKey=<clave>;Version=1.0;"
+dotnet user-secrets --project src/Notificaciones.Api set "Acs:ConnectionString" "endpoint=https://<recurso>.communication.azure.com/;accesskey=<clave>"
+dotnet user-secrets --project src/Notificaciones.Api set "Email:Sender" "DoNotReply@<dominio>.azurecomm.net"
 
 # Ver los valores configurados
 dotnet user-secrets --project src/Notificaciones.Api list
@@ -32,9 +37,21 @@ dotnet user-secrets --project src/Notificaciones.Api list
 
 Los valores anteriores son de ejemplo; pide los reales al equipo.
 
+La service account de Firebase es un JSON de varias líneas, con espacios y comillas, y en PowerShell 5.1 no se puede pasar como argumento. Se carga así, desde la raíz del repo, con el archivo descargado **fuera del repo**:
+
+```powershell
+$sa = "$HOME\Downloads\service-account.json"   # Consola de Firebase → Configuración del proyecto → Cuentas de servicio
+$tmp = "$env:TEMP\firebase-secret.json"
+[IO.File]::WriteAllText($tmp, (@{ 'Firebase:ServiceAccountJson' = [IO.File]::ReadAllText($sa) } | ConvertTo-Json -Compress))
+cmd /c "dotnet user-secrets --project src/Notificaciones.Api set < `"$tmp`""
+Remove-Item $tmp
+```
+
+Así se guarda un solo secreto y se conservan los que ya estaban. No uses `Get-Content` ni la tubería de PowerShell: agregan un BOM o propiedades extra, y `dotnet user-secrets` no puede leer el JSON.
+
 - Para Service Bus usa una política de acceso compartido **de la cola**, solo con permiso **Listen**. No uses `RootManageSharedAccessKey`: da control total sobre todo el namespace. Si la cadena incluye `EntityPath`, debe coincidir con `ServiceBus:QueueName`.
 - En Cosmos DB con API de MongoDB la cadena de conexión debe llevar `retryWrites=false`.
-- En Azure las mismas claves van en Key Vault con `--` en lugar de `:` (por ejemplo `ServiceBus--ConnectionString`).
+- En Azure las mismas claves van en Key Vault con `--` en lugar de `:` (por ejemplo `ServiceBus--ConnectionString`). Los secretos de los canales son `Firebase--ServiceAccountJson` (el contenido del JSON, por ejemplo con `az keyvault secret set --vault-name kv-cvexpert --name Firebase--ServiceAccountJson --file service-account.json`) y `Acs--ConnectionString`. `Email__Sender` va como configuración normal del App Service.
 
 ## Consumidor de la cola
 
@@ -42,7 +59,7 @@ Los valores anteriores son de ejemplo; pide los reales al equipo.
 
 1. Lo valida contra [`docs/contratos/evento-notificacion.schema.json`](docs/contratos/evento-notificacion.schema.json). Si no es JSON válido o no cumple el esquema, lo manda a la dead-letter sin reintentar (`InvalidJson` o `SchemaValidationFailed`, con el detalle en la descripción).
 2. Lo guarda en la colección `notifications`. Si el `eventId` ya existe es un duplicado: se completa sin hacer nada más.
-3. Lo entrega por los canales (`INotificationDispatcher`; por ahora solo tiempo real con SignalR). Si la entrega falla, el mensaje se completa igual porque ya está guardado.
+3. Lo entrega por los canales (ver "Canales de entrega"). Si la entrega falla, el mensaje se completa igual porque ya está guardado.
 4. Si Mongo falla, espera 5 s y abandona el mensaje para que Service Bus lo reintente; al agotar `MaxDeliveryCount`, Service Bus lo pasa a la dead-letter.
 
 No consume hasta que existan los índices (ver "Colecciones e índices"): sin el índice único de `eventId` no hay deduplicación.
@@ -73,13 +90,25 @@ Todos requieren `X-User-Id` (si falta, 401) y solo ven o modifican datos de ese 
 
 `title` y `body` de cada notificación se arman al responder, en el idioma del usuario según el directorio (`es` si no está registrado).
 
+## Canales de entrega
+
+`CompositeNotificationDispatcher` lee el directorio una vez (idioma y correo; `es` y sin correo si el usuario no está registrado), arma `title` y `body` y llama en paralelo a cada canal activo. Si un canal falla, se registra con su nombre y los demás siguen.
+
+| Canal | Cuándo envía | Qué envía |
+|---|---|---|
+| **SignalR** (`SignalRNotificationChannel`) | Siempre; solo llega si el usuario tiene la web abierta | `notification` con la forma de un item de `GET /notifications` |
+| **Push FCM** (`FcmNotificationChannel`) | Con `Firebase:ServiceAccountJson`, a todos los tokens del usuario | `notification { title, body }` y `data { notificationId, type }` (ver sección 6 de [`docs/contratos/README.md`](docs/contratos/README.md)). Borra los tokens que FCM marca como `Unregistered`; `SenderIdMismatch` e `InvalidArgument` solo se registran. |
+| **Correo** (`EmailNotificationChannel`) | Con `Acs:ConnectionString` y `Email:Sender`, si el usuario está en el directorio y el tipo está en `EmailNotificationChannel.EmailTypes` | Asunto = `title`; HTML simple con `title`, `body` y el pie "CVExpert" (`DefaultEmailComposer`). ACS lo acepta sin esperar a la entrega. |
+
+`job.new` no se envía por correo hasta decidir las preferencias por canal (pregunta abierta 7 del contrato): para cambiarlo, edita `EmailNotificationChannel.EmailTypes`.
+
 ## Tiempo real (SignalR)
 
 El APIM es Consumption y no soporta WebSockets, así que se usa **Azure SignalR Service**:
 
 1. **Negotiate (vía APIM).** La librería cliente hace `POST /notifications/hub/negotiate`. APIM agrega `X-User-Id` y el backend responde con la `url` del SignalR Service y un `accessToken` emitido para ese usuario. Sin `X-User-Id` responde 401.
 2. **Conexión (directa).** El cliente se conecta al SignalR Service con esa `url` y ese token, sin pasar por APIM ni por este backend. La identidad viaja dentro del token.
-3. **Envío.** Cuando llega una notificación, `SignalRNotificationDispatcher` invoca `notification` en las conexiones del usuario (`IHubContext<NotificationsHub>.Clients.User(userId)`). El argumento tiene la misma forma que un item de `GET /notifications` (`id`, `type`, `title`, `body`, `data`, `read`, `createdAt`).
+3. **Envío.** Cuando llega una notificación, `SignalRNotificationChannel` invoca `notification` en las conexiones del usuario (`IHubContext<NotificationsHub>.Clients.User(userId)`). El argumento tiene la misma forma que un item de `GET /notifications` (`id`, `type`, `title`, `body`, `data`, `read`, `createdAt`).
 
 `title` y `body` se arman al enviar, en el idioma del directorio (`es` si el usuario no está registrado), con textos por defecto por tipo e idioma (`DefaultNotificationRenderer`). Se reemplazarán por las plantillas editables.
 
@@ -103,7 +132,7 @@ dotnet run --project src/Notificaciones.Api
 dotnet test
 ```
 
-Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactory`, que quita el consumidor de la cola, usa repositorios en memoria y fuerza SignalR local), sin Mongo, Service Bus ni Azure SignalR, aunque haya user-secrets configurados. El validador, el handler del consumidor y el dispatcher de SignalR se prueban con dobles. Las consultas reales a Mongo (`Infrastructure/Mongo/`) no tienen pruebas automáticas.
+Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactory`, que quita el consumidor de la cola, usa repositorios en memoria, fuerza SignalR local y deja push y correo desactivados), sin Mongo, Service Bus, Azure SignalR, Firebase ni ACS, aunque haya user-secrets configurados. El validador, el handler del consumidor y los canales se prueban con dobles (`IFcmSender` e `IEmailSender` aíslan los SDK). Las consultas reales a Mongo (`Infrastructure/Mongo/`) y los adaptadores de Firebase y ACS no tienen pruebas automáticas.
 
 ### Prueba manual
 
@@ -144,11 +173,11 @@ cvexpert-ms-notificaciones/
 │   ├── Contracts/         # Formas de respuesta del contrato (NotificationResponse)
 │   ├── Controllers/       # Endpoints HTTP: salud, directorio, dispositivos y centro de notificaciones
 │   ├── Errors/            # Formato único de errores { status, message, errors? }
-│   ├── Hubs/              # Hub de SignalR y entrega en tiempo real (SignalRNotificationDispatcher)
+│   ├── Hubs/              # Hub de SignalR y canal de tiempo real (SignalRNotificationChannel)
 │   ├── Domain/            # Documentos de Mongo (Notification, DirectoryEntry, Device)
-│   ├── Infrastructure/    # MongoDB (repositorios e índices) y Service Bus (consumidor de la cola)
+│   ├── Infrastructure/    # MongoDB (repositorios e índices), Service Bus (consumidor), Firebase y ACS (adaptadores de los SDK)
 │   ├── Options/           # Clases de configuración (patrón Options)
-│   ├── Services/          # Lógica de negocio: eventos de la cola, textos de las notificaciones, interfaces de persistencia y entrega
+│   ├── Services/          # Lógica de negocio: eventos de la cola, textos, canales de entrega (Channels/) e interfaces de persistencia
 │   ├── Program.cs
 │   ├── appsettings.json
 │   └── appsettings.Development.json

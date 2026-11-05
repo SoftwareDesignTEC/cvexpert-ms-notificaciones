@@ -1,48 +1,25 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
-using MongoDB.Bson;
 using Notificaciones.Api.Contracts;
-using Notificaciones.Api.Domain;
 using Notificaciones.Api.Hubs;
 using Notificaciones.Api.Services;
 
 namespace Notificaciones.Tests;
 
-public class SignalRNotificationDispatcherTests
+public class SignalRNotificationChannelTests
 {
     private readonly HubFalso _hub = new();
-    private readonly InMemoryDirectoryRepository _directorio = new();
-    private readonly SignalRNotificationDispatcher _dispatcher;
+    private readonly SignalRNotificationChannel _canal;
 
-    public SignalRNotificationDispatcherTests()
+    public SignalRNotificationChannelTests()
     {
-        _dispatcher = new SignalRNotificationDispatcher(_hub, _directorio, new DefaultNotificationRenderer());
+        _canal = new SignalRNotificationChannel(_hub);
     }
-
-    private static Notification Notificacion() => new()
-    {
-        Id = "6711a2f0c3e4b5a6d7e8f901",
-        EventId = "3f2c6a1e-8b4d-4c7a-9e21-5d6f7a8b9c0d",
-        UserId = "usuario-1",
-        Type = "application.status_changed",
-        Source = "ofertas-postulaciones",
-        Data = new BsonDocument
-        {
-            ["applicationId"] = "1532",
-            ["jobOfferId"] = "88",
-            ["jobTitle"] = "Desarrollador .NET",
-            ["company"] = "Acme",
-            ["newStatus"] = "interview",
-        },
-        OccurredAt = 1760716800000,
-        CreatedAt = 1760720400000,
-        ReadAt = null,
-    };
 
     [Fact]
     public async Task EnviaANotificationDelUsuarioConLaFormaDelContrato()
     {
-        await _dispatcher.DispatchAsync(Notificacion(), CancellationToken.None);
+        await _canal.SendAsync(EntregasDePrueba.Entrega(), CancellationToken.None);
 
         var envio = Assert.Single(_hub.Envios);
         Assert.Equal("usuario-1", envio.Usuario);
@@ -61,22 +38,18 @@ public class SignalRNotificationDispatcherTests
     }
 
     [Fact]
-    public async Task UsuarioConInglesEnElDirectorio_RecibeLosTextosEnIngles()
+    public async Task UsaLosTextosDeLaEntrega()
     {
-        await _directorio.UpsertAsync(
-            new DirectoryEntry { UserId = "usuario-1", Email = "ana@ejemplo.com", Language = "en" }, CancellationToken.None);
-
-        await _dispatcher.DispatchAsync(Notificacion(), CancellationToken.None);
+        await _canal.SendAsync(EntregasDePrueba.Entrega(destinatario: EntregasDePrueba.Ana("en")), CancellationToken.None);
 
         var payload = Assert.IsType<NotificationResponse>(Assert.Single(Assert.Single(_hub.Envios).Argumentos));
         Assert.Equal("Your application was updated", payload.Title);
-        Assert.Equal("Your application for Desarrollador .NET at Acme changed to \"Interview\".", payload.Body);
     }
 
     [Fact]
     public void PayloadSerializado_TieneSoloLosCamposDelContrato()
     {
-        var payload = NotificationResponse.From(Notificacion(), new RenderedText("t", "b"));
+        var payload = NotificationResponse.From(EntregasDePrueba.Notificacion(), new RenderedText("t", "b"));
 
         // Mismas opciones que el protocolo JSON de SignalR (camelCase). readAt se omite mientras no está leída.
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -88,7 +61,7 @@ public class SignalRNotificationDispatcherTests
     [Fact]
     public void NotificacionLeida_IncluyeReadAt()
     {
-        var notificacion = Notificacion();
+        var notificacion = EntregasDePrueba.Notificacion();
         notificacion.ReadAt = 1760724000000;
 
         var payload = NotificationResponse.From(notificacion, new RenderedText("t", "b"));

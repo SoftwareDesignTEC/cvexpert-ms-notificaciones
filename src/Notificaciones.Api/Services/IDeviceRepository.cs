@@ -15,6 +15,9 @@ public interface IDeviceRepository
     Task<DeviceRegistrationResult> RegisterAsync(
         string userId, string token, string platform, long now, CancellationToken cancellationToken);
 
+    /// <summary>Tokens de todos los dispositivos del usuario.</summary>
+    Task<IReadOnlyList<string>> ListTokensAsync(string userId, CancellationToken cancellationToken);
+
     /// <summary>Quita el token solo si es del usuario; si no existe o es de otro, no hace nada.</summary>
     Task DeleteAsync(string userId, string token, CancellationToken cancellationToken);
 }

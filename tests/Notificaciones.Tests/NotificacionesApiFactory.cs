@@ -11,8 +11,9 @@ using Notificaciones.Api.Services;
 namespace Notificaciones.Tests;
 
 /// <summary>
-/// API en memoria sin el consumidor de la cola, con repositorios en memoria y SignalR local: aunque haya user-secrets
-/// con cadenas reales, las pruebas no se conectan a Service Bus, Mongo ni Azure SignalR Service.
+/// API en memoria sin el consumidor de la cola, con repositorios en memoria, SignalR local y sin push ni correo:
+/// aunque haya user-secrets con cadenas reales, las pruebas no se conectan a Service Bus, Mongo, Azure SignalR Service,
+/// Firebase ni Azure Communication Services.
 /// </summary>
 public class NotificacionesApiFactory : WebApplicationFactory<Program>
 {
@@ -32,6 +33,9 @@ public class NotificacionesApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("Azure:SignalR:ConnectionString", "");
+        builder.UseSetting("Firebase:ServiceAccountJson", "");
+        builder.UseSetting("Acs:ConnectionString", "");
+        builder.UseSetting("Email:Sender", "");
 
         builder.ConfigureTestServices(services =>
         {

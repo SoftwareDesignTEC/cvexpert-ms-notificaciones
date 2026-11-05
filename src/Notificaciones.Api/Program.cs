@@ -4,10 +4,13 @@ using MongoDB.Driver;
 using Notificaciones.Api.Auth;
 using Notificaciones.Api.Errors;
 using Notificaciones.Api.Hubs;
+using Notificaciones.Api.Infrastructure.Email;
+using Notificaciones.Api.Infrastructure.Firebase;
 using Notificaciones.Api.Infrastructure.Mongo;
 using Notificaciones.Api.Infrastructure.ServiceBus;
 using Notificaciones.Api.Options;
 using Notificaciones.Api.Services;
+using Notificaciones.Api.Services.Channels;
 using Notificaciones.Api.Services.Events;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -43,10 +46,31 @@ builder.Services.AddSingleton<IDeviceRepository, MongoDeviceRepository>();
 builder.Services.AddSingleton<MongoIndexInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MongoIndexInitializer>());
 
+// Canales de entrega: tiempo real siempre; push y correo solo con su configuración.
+builder.Services.AddSingleton<INotificationChannel, SignalRNotificationChannel>();
+
+var firebase = builder.Configuration.GetSection(FirebaseOptions.SectionName).Get<FirebaseOptions>() ?? new();
+var useFcm = !string.IsNullOrWhiteSpace(firebase.ServiceAccountJson);
+if (useFcm)
+{
+    builder.Services.AddSingleton<IFcmSender>(_ => new FirebaseFcmSender(firebase.ServiceAccountJson));
+    builder.Services.AddSingleton<INotificationChannel, FcmNotificationChannel>();
+}
+
+var acs = builder.Configuration.GetSection(AcsOptions.SectionName).Get<AcsOptions>() ?? new();
+var email = builder.Configuration.GetSection(EmailOptions.SectionName).Get<EmailOptions>() ?? new();
+var useEmail = !string.IsNullOrWhiteSpace(acs.ConnectionString) && !string.IsNullOrWhiteSpace(email.Sender);
+if (useEmail)
+{
+    builder.Services.AddSingleton<IEmailSender>(_ => new AcsEmailSender(acs.ConnectionString, email.Sender));
+    builder.Services.AddSingleton<IEmailComposer, DefaultEmailComposer>();
+    builder.Services.AddSingleton<INotificationChannel, EmailNotificationChannel>();
+}
+
 // Consumidor de la cola de eventos y entrega por los canales.
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<INotificationRenderer, DefaultNotificationRenderer>();
-builder.Services.AddSingleton<INotificationDispatcher, SignalRNotificationDispatcher>();
+builder.Services.AddSingleton<INotificationDispatcher, CompositeNotificationDispatcher>();
 builder.Services.AddSingleton<NotificationEventHandler>();
 builder.Services.AddHostedService<NotificationEventsConsumer>();
 
@@ -54,6 +78,10 @@ var app = builder.Build();
 
 if (!useAzureSignalR)
     app.Logger.LogWarning("Falta Azure:SignalR:ConnectionString: se usa SignalR local (solo para desarrollo y pruebas)");
+if (!useFcm)
+    app.Logger.LogWarning("Falta Firebase:ServiceAccountJson: el push por FCM está desactivado");
+if (!useEmail)
+    app.Logger.LogWarning("Falta Acs:ConnectionString o Email:Sender: el correo está desactivado");
 
 app.UseErrorResponses();
 
