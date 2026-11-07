@@ -246,5 +246,5 @@ Se mantiene la numeración original para poder referirse a cada pregunta. Las re
 
 - **1. WebSockets en APIM.** El APIM es tier Consumption y no soporta WebSockets. Se usará Azure SignalR Service (Free): el negotiate pasa por APIM y la conexión va directa al SignalR Service (sección 5).
 - **4. Mismo `X-User-Id` en todos los servicios.** `X-User-Id` es el `sub` del token de Google y es el mismo valor en todos los servicios. APIM lo sobrescribe siempre, así que un cliente no puede suplantarlo enviándolo él mismo. Los encabezados de identidad solo llegan al backend cuando se conecten las operaciones de Notificaciones en APIM.
-- **5. Campos de `data`.** Todos los productores confirmaron sus campos; Justin confirmó `course.recommended` el 2026-11-05.
+- **5. Campos de `data`.** Todos los productores confirmaron sus campos; Justin confirmó `course.recommended` el 2026-11-04.
 - **8. `X-User-Id` en SignalR.** Queda cerrada con la 1: `X-User-Id` solo hace falta en el negotiate, que pasa por APIM. La conexión al SignalR Service se identifica con el `accessToken` que entrega el negotiate.
