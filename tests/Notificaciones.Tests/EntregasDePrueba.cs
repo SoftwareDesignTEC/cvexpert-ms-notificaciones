@@ -2,6 +2,7 @@ using MongoDB.Bson;
 using Notificaciones.Api.Domain;
 using Notificaciones.Api.Services;
 using Notificaciones.Api.Services.Channels;
+using Notificaciones.Api.Services.Templates;
 
 namespace Notificaciones.Tests;
 
@@ -31,11 +32,15 @@ public static class EntregasDePrueba
     public static DirectoryEntry Ana(string language = "es", string userId = "usuario-1") =>
         new() { UserId = userId, Email = "ana@ejemplo.com", Language = language };
 
-    /// <summary>Entrega como la arma el compuesto: textos del renderer en el idioma del destinatario (es sin directorio).</summary>
+    /// <summary>Entrega como la arma el compuesto: texto por defecto en el idioma del destinatario (es sin directorio).</summary>
     public static NotificationDelivery Entrega(Notification? notificacion = null, DirectoryEntry? destinatario = null)
     {
         notificacion ??= Notificacion();
         var idioma = destinatario?.Language ?? Languages.Default;
-        return new NotificationDelivery(notificacion, destinatario, idioma, new DefaultNotificationRenderer().Render(notificacion, idioma));
+        return new NotificationDelivery(notificacion, destinatario, idioma, TextoPorDefecto(notificacion, idioma));
     }
+
+    /// <summary>title y body con el texto por defecto, sin plantillas guardadas.</summary>
+    public static RenderedText TextoPorDefecto(Notification notificacion, string idioma) =>
+        TemplateNotificationRenderer.Render(notificacion, idioma, DefaultTemplates.Get(notificacion.Type, idioma));
 }

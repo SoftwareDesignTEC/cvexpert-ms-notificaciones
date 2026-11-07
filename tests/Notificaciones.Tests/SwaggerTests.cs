@@ -31,6 +31,8 @@ public class SwaggerTests : IClassFixture<NotificacionesApiFactory>
                 "/notifications/unread-count",
                 "/notifications/{id}/read",
                 "/notifications/read-all",
+                "/notifications/templates",
+                "/notifications/templates/{type}/{language}",
             },
             rutas);
     }

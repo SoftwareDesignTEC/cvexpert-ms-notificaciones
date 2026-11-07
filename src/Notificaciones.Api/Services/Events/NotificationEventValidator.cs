@@ -64,6 +64,10 @@ public static partial class NotificationEventValidator
     private static readonly Rule KnownType = OneOf([.. Specs.Keys]);
     private static readonly Rule KnownSource = OneOf(Sources);
 
+    /// <summary>Campos de data por tipo, en el orden del esquema. Son también los marcadores permitidos en las plantillas.</summary>
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> DataFields =
+        Specs.ToDictionary(spec => spec.Key, spec => (IReadOnlyList<string>)spec.Value.Fields.Select(f => f.Name).ToArray());
+
     public static EventValidationResult Validate(BinaryData body)
     {
         JsonDocument document;

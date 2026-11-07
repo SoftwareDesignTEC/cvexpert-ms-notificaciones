@@ -16,7 +16,8 @@ public class CompositeNotificationDispatcher(
     {
         var recipient = await GetRecipientAsync(notification, cancellationToken);
         var language = recipient?.Language ?? Languages.Default;
-        var delivery = new NotificationDelivery(notification, recipient, language, renderer.Render(notification, language));
+        var text = await renderer.RenderAsync(notification, language, cancellationToken);
+        var delivery = new NotificationDelivery(notification, recipient, language, text);
 
         await Task.WhenAll(channels.Select(channel => SendAsync(channel, delivery, cancellationToken)));
     }

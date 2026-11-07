@@ -2,15 +2,35 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Notificaciones.Api.Domain;
 using Notificaciones.Api.Services;
 using Notificaciones.Api.Services.Channels;
+using Notificaciones.Api.Services.Templates;
 
 namespace Notificaciones.Tests;
 
 public class CompositeNotificationDispatcherTests
 {
     private readonly InMemoryDirectoryRepository _directorio = new();
+    private readonly InMemoryTemplateRepository _plantillas = new();
 
     private CompositeNotificationDispatcher Compuesto(IDirectoryRepository? directorio, params INotificationChannel[] canales) =>
-        new(canales, directorio ?? _directorio, new DefaultNotificationRenderer(), NullLogger<CompositeNotificationDispatcher>.Instance);
+        new(canales, directorio ?? _directorio,
+            new TemplateNotificationRenderer(new TemplateCache(_plantillas, TimeProvider.System), NullLogger<TemplateNotificationRenderer>.Instance),
+            NullLogger<CompositeNotificationDispatcher>.Instance);
+
+    [Fact]
+    public async Task ConPlantillaGuardada_EntregaSuTexto()
+    {
+        await _plantillas.UpsertAsync(new NotificationTemplate
+        {
+            Id = "application.status_changed:es", Type = "application.status_changed", Language = "es",
+            Title = "{{company}} respondió", Body = "Estado: {{newStatus}}", UpdatedAt = 1, UpdatedBy = "admin@ejemplo.com",
+        }, CancellationToken.None);
+        var canal = new CanalFalso("signalr");
+
+        await Compuesto(null, canal).DispatchAsync(EntregasDePrueba.Notificacion(), CancellationToken.None);
+
+        var entrega = Assert.Single(canal.Entregas);
+        Assert.Equal(new RenderedText("Acme respondió", "Estado: Entrevista"), entrega.Text);
+    }
 
     [Fact]
     public async Task LlamaATodosLosCanales()

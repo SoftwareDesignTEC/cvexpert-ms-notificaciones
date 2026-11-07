@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using Notificaciones.Api.Services;
 using Notificaciones.Api.Services.Channels;
+using Notificaciones.Api.Services.Templates;
 
 namespace Notificaciones.Tests;
 
@@ -90,11 +91,31 @@ public class DefaultEmailComposerTests
         var notificacion = EntregasDePrueba.Notificacion();
         notificacion.Data["jobTitle"] = new BsonString("<script>alert(1)</script>");
         var entrega = new NotificationDelivery(
-            notificacion, EntregasDePrueba.Ana(), "es", new DefaultNotificationRenderer().Render(notificacion, "es"));
+            notificacion, EntregasDePrueba.Ana(), "es", EntregasDePrueba.TextoPorDefecto(notificacion, "es"));
 
         var correo = new DefaultEmailComposer().Compose(entrega);
 
         Assert.DoesNotContain("<script>", correo.Html);
         Assert.Contains("&lt;script&gt;", correo.Html);
+    }
+
+    [Fact]
+    public void PlantillaEditada_SeEscapaEnteraYRespetaLosSaltosDeLinea()
+    {
+        // La plantilla es texto plano: ni ella ni los valores del evento pueden meter HTML en el correo.
+        var notificacion = EntregasDePrueba.Notificacion();
+        notificacion.Data["company"] = new BsonString("Acme <img src=x onerror=alert(1)>");
+        var plantilla = new TemplateText("<b>{{company}}</b>", "Hola:\r\n<i>{{company}}</i> & cía.\n\nSaludos");
+        var entrega = new NotificationDelivery(
+            notificacion, EntregasDePrueba.Ana(), "es", TemplateNotificationRenderer.Render(notificacion, "es", plantilla));
+
+        var correo = new DefaultEmailComposer().Compose(entrega);
+
+        Assert.DoesNotContain("<img", correo.Html);
+        Assert.DoesNotContain("<b>", correo.Html);
+        Assert.DoesNotContain("<i>", correo.Html);
+        Assert.Contains("&lt;b&gt;Acme &lt;img src=x onerror=alert(1)&gt;&lt;/b&gt;", correo.Html);
+        Assert.Contains("Hola:<br>&lt;i&gt;Acme &lt;img src=x onerror=alert(1)&gt;&lt;/i&gt; &amp; cía.<br><br>Saludos", correo.Html);
+        Assert.Equal("<b>Acme <img src=x onerror=alert(1)></b>", correo.Subject);
     }
 }
