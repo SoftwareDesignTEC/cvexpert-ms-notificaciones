@@ -36,6 +36,7 @@ public class NotificacionesApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("Firebase:ServiceAccountJson", "");
         builder.UseSetting("Acs:ConnectionString", "");
         builder.UseSetting("Email:Sender", "");
+        builder.UseSetting("Apim:CertificateThumbprint", "");
 
         builder.ConfigureTestServices(services =>
         {

@@ -67,6 +67,10 @@ if (useEmail)
     builder.Services.AddSingleton<INotificationChannel, EmailNotificationChannel>();
 }
 
+// Solo APIM puede llamar al backend: certificado de cliente con alguna de estas huellas.
+var apim = builder.Configuration.GetSection(ApimOptions.SectionName).Get<ApimOptions>() ?? new();
+var apimThumbprints = ApimCertificateMiddleware.ParseThumbprints(apim.CertificateThumbprint);
+
 // Consumidor de la cola de eventos y entrega por los canales.
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<INotificationRenderer, DefaultNotificationRenderer>();
@@ -82,8 +86,13 @@ if (!useFcm)
     app.Logger.LogWarning("Falta Firebase:ServiceAccountJson: el push por FCM está desactivado");
 if (!useEmail)
     app.Logger.LogWarning("Falta Acs:ConnectionString o Email:Sender: el correo está desactivado");
+if (apimThumbprints.Count == 0)
+    app.Logger.LogWarning("Falta Apim:CertificateThumbprint: se aceptan llamadas que no vienen de APIM (solo para desarrollo y pruebas)");
 
 app.UseErrorResponses();
+
+// Antes de la autenticación: sin el certificado de APIM no se confía en X-User-Id.
+if (apimThumbprints.Count > 0) app.UseMiddleware<ApimCertificateMiddleware>(apimThumbprints);
 
 if (app.Environment.IsDevelopment())
 {

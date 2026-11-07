@@ -20,6 +20,7 @@ Ninguna cadena de conexión ni credencial va en el código ni en `appsettings.js
 | `Firebase:ServiceAccountJson` | JSON completo de la service account de Firebase (push a Android) | Push desactivado |
 | `Acs:ConnectionString` | Cadena de Azure Communication Services (correo) | Correo desactivado |
 | `Email:Sender` | Remitente de un dominio verificado en ACS, por ejemplo `DoNotReply@<dominio>.azurecomm.net`. No es secreto | Correo desactivado |
+| `Apim:CertificateThumbprint` | Huellas SHA-1 del certificado de cliente de APIM, separadas por coma (ver "Solo llamadas de APIM"). No es secreto | Se aceptan llamadas que no vienen de APIM (solo para desarrollo y pruebas) |
 
 Sin alguna de estas claves, la API sigue funcionando; solo se registra una advertencia.
 
@@ -51,7 +52,49 @@ Así se guarda un solo secreto y se conservan los que ya estaban. No uses `Get-C
 
 - Para Service Bus usa una política de acceso compartido **de la cola**, solo con permiso **Listen**. No uses `RootManageSharedAccessKey`: da control total sobre todo el namespace. Si la cadena incluye `EntityPath`, debe coincidir con `ServiceBus:QueueName`.
 - En Cosmos DB con API de MongoDB la cadena de conexión debe llevar `retryWrites=false`.
-- En Azure las mismas claves van en Key Vault con `--` en lugar de `:` (por ejemplo `ServiceBus--ConnectionString`). Los secretos de los canales son `Firebase--ServiceAccountJson` (el contenido del JSON, por ejemplo con `az keyvault secret set --vault-name kv-cvexpert --name Firebase--ServiceAccountJson --file service-account.json`) y `Acs--ConnectionString`. `Email__Sender` va como configuración normal del App Service.
+- En Azure las mismas claves van en Key Vault con `--` en lugar de `:` (por ejemplo `ServiceBus--ConnectionString`). Los secretos de los canales son `Firebase--ServiceAccountJson` (el contenido del JSON, por ejemplo con `az keyvault secret set --vault-name kv-cvexpert --name Firebase--ServiceAccountJson --file service-account.json`) y `Acs--ConnectionString`. `Email__Sender` y `Apim__CertificateThumbprint` van como configuración normal del App Service.
+
+## Solo llamadas de APIM (certificado de cliente)
+
+APIM presenta un certificado de cliente al llamar al backend, y el App Service lo pasa en el encabezado `X-ARR-ClientCert` (DER en base64). Con `Apim:CertificateThumbprint` configurado, `ApimCertificateMiddleware` corre antes de la autenticación y responde **403** `{ status, message }` si:
+- falta el encabezado o no se puede leer,
+- la huella no es ninguna de las configuradas (sin distinguir mayúsculas e ignorando espacios),
+- o la fecha actual está fuera de `NotBefore`–`NotAfter`.
+
+El motivo queda en el log (con la huella, nunca el certificado). `/health` está excluido. Sin la clave, el middleware no se activa y se registra una advertencia.
+
+**Importante:** el certificado de APIM es público. El chequeo solo prueba que la llamada viene de APIM si el App Service está en **Client certificate mode = Required**: así es el App Service quien llena `X-ARR-ClientCert` después de verificar en el TLS que el cliente tiene la clave privada. Sin ese modo, cualquiera podría mandar el encabezado a mano con el certificado público.
+
+### Pasos en Azure (en este orden)
+
+1. **APIM** (quien lo administra): subir el certificado de cliente (`.pfx`) y configurar el backend de la API de Notificaciones para que lo presente.
+2. **Huella**: obtenerla del certificado público (`.cer`):
+   ```powershell
+   (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$HOME\Downloads\apim.cer").Thumbprint
+   ```
+3. **App Service `cvexpert-notificaciones` → Configuración**: agregar `Apim__CertificateThumbprint` = la huella. Es configuración normal, no Key Vault.
+4. **App Service → Configuración → General → Certificados de cliente entrantes**: *Client certificate mode* = **Required** y *Certificate exclusion paths* = `/health`. Sin la exclusión, el chequeo de `/health` del workflow de CI/CD y el Health check del portal fallan, porque no presentan certificado.
+
+Si el App Service exige el certificado antes de que APIM lo presente, todas las llamadas fallan. Por eso el paso 1 va primero.
+
+**Rotación:** cuando el certificado de APIM vaya a cambiar, configura las dos huellas (`VIEJA,NUEVA`), cambia el certificado en APIM y después quita la vieja.
+
+### Comprobar después de desplegar
+
+```powershell
+$app = "https://cvexpert-notificaciones.azurewebsites.net"
+$certPublico = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$HOME\Downloads\apim.cer"))
+
+# 1. /health directo, sin certificado: 200
+curl.exe -i "$app/health"
+
+# 2. Directo al App Service, sin certificado pero con un X-ARR-ClientCert falso hecho con el certificado público de APIM:
+#    debe rechazarse (403 o error de TLS del App Service). Si responde 200, el App Service no está en modo Required.
+curl.exe -i "$app/notifications/unread-count" -H "X-User-Id: prueba" -H "X-ARR-ClientCert: $certPublico"
+
+# 3. A través de APIM, con un token de Google válido: 200
+curl.exe -i "https://<apim>.azure-api.net/notifications/unread-count" -H "Authorization: Bearer <token>"
+```
 
 ## Consumidor de la cola
 
@@ -132,7 +175,7 @@ dotnet run --project src/Notificaciones.Api
 dotnet test
 ```
 
-Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactory`, que quita el consumidor de la cola, usa repositorios en memoria, fuerza SignalR local y deja push y correo desactivados), sin Mongo, Service Bus, Azure SignalR, Firebase ni ACS, aunque haya user-secrets configurados. El validador, el handler del consumidor y los canales se prueban con dobles (`IFcmSender` e `IEmailSender` aíslan los SDK). Las consultas reales a Mongo (`Infrastructure/Mongo/`) y los adaptadores de Firebase y ACS no tienen pruebas automáticas.
+Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactory`, que quita el consumidor de la cola, usa repositorios en memoria, fuerza SignalR local, deja push y correo desactivados y no exige el certificado de APIM), sin Mongo, Service Bus, Azure SignalR, Firebase ni ACS, aunque haya user-secrets configurados. El validador, el handler del consumidor y los canales se prueban con dobles (`IFcmSender` e `IEmailSender` aíslan los SDK). Las consultas reales a Mongo (`Infrastructure/Mongo/`) y los adaptadores de Firebase y ACS no tienen pruebas automáticas.
 
 ### Prueba manual
 
@@ -169,7 +212,7 @@ curl -i -X POST "http://localhost:5029/notifications/hub/negotiate?negotiateVers
 cvexpert-ms-notificaciones/
 ├── Notificaciones.sln
 ├── src/Notificaciones.Api/
-│   ├── Auth/              # Autenticación por los encabezados de APIM (esquema ApimHeaders)
+│   ├── Auth/              # Certificado de cliente de APIM y autenticación por sus encabezados (esquema ApimHeaders)
 │   ├── Contracts/         # Formas de respuesta del contrato (NotificationResponse)
 │   ├── Controllers/       # Endpoints HTTP: salud, directorio, dispositivos y centro de notificaciones
 │   ├── Errors/            # Formato único de errores { status, message, errors? }
