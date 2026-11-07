@@ -9,7 +9,7 @@ public interface IEmailSender
     Task SendAsync(string to, ComposedEmail email, CancellationToken cancellationToken);
 }
 
-/// <summary>Arma el correo de una notificación. Se reemplaza por las plantillas editables cuando existan.</summary>
+/// <summary>Arma el correo de una notificación a partir de su title y body ya renderizados.</summary>
 public interface IEmailComposer
 {
     ComposedEmail Compose(NotificationDelivery delivery);
@@ -58,7 +58,10 @@ public class EmailNotificationChannel(
     }
 }
 
-/// <summary>Asunto = title; cuerpo HTML simple con title, body y el pie "CVExpert", más una versión en texto plano.</summary>
+/// <summary>
+/// Asunto = title; cuerpo HTML simple con title, body y el pie "CVExpert", más una versión en texto plano.
+/// title y body vienen de las plantillas (texto plano): se escapan completos y los saltos de línea del body pasan a &lt;br&gt;.
+/// </summary>
 public class DefaultEmailComposer : IEmailComposer
 {
     // Escapa < > & y comillas, pero deja las tildes y la ñ legibles.
@@ -68,14 +71,16 @@ public class DefaultEmailComposer : IEmailComposer
     {
         var (title, body) = delivery.Text;
 
-        // title y body incluyen datos de otros servicios (jobTitle, company...): se escapan para HTML.
+        // title y body incluyen la plantilla y datos de otros servicios (jobTitle, company...): se escapan para HTML.
+        // Cada línea se escapa por separado porque el codificador también escapa los saltos de línea.
+        var htmlBody = string.Join("<br>", body.ReplaceLineEndings("\n").Split('\n').Select(Html.Encode));
         var html = $"""
             <!doctype html>
             <html lang="{Html.Encode(delivery.Language)}">
             <body style="margin:0;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
               <div style="max-width:560px;margin:0 auto;">
                 <h1 style="font-size:20px;margin:0 0 12px;">{Html.Encode(title)}</h1>
-                <p style="font-size:15px;line-height:1.5;margin:0 0 24px;">{Html.Encode(body)}</p>
+                <p style="font-size:15px;line-height:1.5;margin:0 0 24px;">{htmlBody}</p>
                 <hr style="border:none;border-top:1px solid #e5e7eb;margin:0 0 12px;">
                 <p style="font-size:12px;color:#6b7280;margin:0;">CVExpert</p>
               </div>

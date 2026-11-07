@@ -12,6 +12,7 @@ using Notificaciones.Api.Options;
 using Notificaciones.Api.Services;
 using Notificaciones.Api.Services.Channels;
 using Notificaciones.Api.Services.Events;
+using Notificaciones.Api.Services.Templates;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,7 +27,8 @@ builder.Services.AddSwaggerGen();
 // Identidad por los encabezados de APIM (X-User-Id, X-User-Email, X-User-Role).
 builder.Services.AddAuthentication(ApimHeadersAuthenticationHandler.SchemeName)
     .AddScheme<AuthenticationSchemeOptions, ApimHeadersAuthenticationHandler>(ApimHeadersAuthenticationHandler.SchemeName, null);
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy(AdminPolicy.Name, policy => policy.RequireRole(AdminPolicy.Role)));
 
 // Con Azure:SignalR:ConnectionString se usa Azure SignalR Service (el negotiate entrega su URL y un token);
 // sin ella, SignalR local para desarrollo y pruebas.
@@ -43,6 +45,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<INotificationRepository, MongoNotificationRepository>();
 builder.Services.AddSingleton<IDirectoryRepository, MongoDirectoryRepository>();
 builder.Services.AddSingleton<IDeviceRepository, MongoDeviceRepository>();
+builder.Services.AddSingleton<ITemplateRepository, MongoTemplateRepository>();
 builder.Services.AddSingleton<MongoIndexInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MongoIndexInitializer>());
 
@@ -73,7 +76,9 @@ var apimThumbprints = ApimCertificateMiddleware.ParseThumbprints(apim.Certificat
 
 // Consumidor de la cola de eventos y entrega por los canales.
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<INotificationRenderer, DefaultNotificationRenderer>();
+// Plantillas guardadas (caché de 60 s que se vacía al editarlas) o, si no hay, el texto por defecto.
+builder.Services.AddSingleton<TemplateCache>();
+builder.Services.AddSingleton<INotificationRenderer, TemplateNotificationRenderer>();
 builder.Services.AddSingleton<INotificationDispatcher, CompositeNotificationDispatcher>();
 builder.Services.AddSingleton<NotificationEventHandler>();
 builder.Services.AddHostedService<NotificationEventsConsumer>();

@@ -20,15 +20,23 @@ public class NotificacionesApiFactory : WebApplicationFactory<Program>
     public InMemoryNotificationRepository Notificaciones => (InMemoryNotificationRepository)Services.GetRequiredService<INotificationRepository>();
     public InMemoryDirectoryRepository Directorio => (InMemoryDirectoryRepository)Services.GetRequiredService<IDirectoryRepository>();
     public InMemoryDeviceRepository Dispositivos => (InMemoryDeviceRepository)Services.GetRequiredService<IDeviceRepository>();
+    public InMemoryTemplateRepository Plantillas => (InMemoryTemplateRepository)Services.GetRequiredService<ITemplateRepository>();
+
+    /// <summary>Servicios extra para una prueba (por ejemplo, un canal que captura las entregas).</summary>
+    public Action<IServiceCollection>? ServiciosExtra { get; init; }
 
     /// <summary>Cliente con los encabezados que agregaría APIM; sin userId, sin identidad.</summary>
-    public HttpClient CrearCliente(string? userId, string? email = null)
+    public HttpClient CrearCliente(string? userId, string? email = null, string? role = null)
     {
         var client = CreateClient();
         if (userId is not null) client.DefaultRequestHeaders.Add(ApimHeadersAuthenticationHandler.UserIdHeader, userId);
         if (email is not null) client.DefaultRequestHeaders.Add(ApimHeadersAuthenticationHandler.UserEmailHeader, email);
+        if (role is not null) client.DefaultRequestHeaders.Add(ApimHeadersAuthenticationHandler.UserRoleHeader, role);
         return client;
     }
+
+    /// <summary>Cliente de un administrador, con id, correo y rol admin.</summary>
+    public HttpClient CrearAdmin(string email = "admin@ejemplo.com") => CrearCliente("admin-1", email, "admin");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -47,9 +55,13 @@ public class NotificacionesApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<INotificationRepository>();
             services.RemoveAll<IDirectoryRepository>();
             services.RemoveAll<IDeviceRepository>();
+            services.RemoveAll<ITemplateRepository>();
             services.AddSingleton<INotificationRepository, InMemoryNotificationRepository>();
             services.AddSingleton<IDirectoryRepository, InMemoryDirectoryRepository>();
             services.AddSingleton<IDeviceRepository, InMemoryDeviceRepository>();
+            services.AddSingleton<ITemplateRepository, InMemoryTemplateRepository>();
+
+            ServiciosExtra?.Invoke(services);
         });
     }
 }

@@ -35,7 +35,9 @@ public class NotificationsController(
         var result = await notifications.ListAsync(userId, unread, page, pageSize, cancellationToken);
         var language = await directory.GetLanguageAsync(userId, cancellationToken);
 
-        var items = result.Items.Select(n => NotificationResponse.From(n, renderer.Render(n, language))).ToList();
+        var items = new List<NotificationResponse>(result.Items.Count);
+        foreach (var notification in result.Items)
+            items.Add(NotificationResponse.From(notification, await renderer.RenderAsync(notification, language, cancellationToken)));
         return Ok(new PagedResponse<NotificationResponse>(result.TotalRecords, page, pageSize, items));
     }
 
@@ -60,7 +62,7 @@ public class NotificationsController(
             return NotFound(new ErrorResponse(StatusCodes.Status404NotFound, "Notificación no encontrada."));
 
         var language = await directory.GetLanguageAsync(userId, cancellationToken);
-        return Ok(NotificationResponse.From(notification, renderer.Render(notification, language)));
+        return Ok(NotificationResponse.From(notification, await renderer.RenderAsync(notification, language, cancellationToken)));
     }
 
     /// <summary>Marca como leídas todas las notificaciones no leídas del usuario. Idempotente.</summary>

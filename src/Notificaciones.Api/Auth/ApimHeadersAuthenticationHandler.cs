@@ -45,6 +45,13 @@ public class ApimHeadersAuthenticationHandler(
         Response.StatusCode = StatusCodes.Status401Unauthorized;
         return Response.WriteAsJsonAsync(new ErrorResponse(StatusCodes.Status401Unauthorized, $"Falta el encabezado {UserIdHeader}."));
     }
+
+    /// <summary>403 con el formato de errores. Solo lo produce la política <see cref="AdminPolicy"/>.</summary>
+    protected override Task HandleForbiddenAsync(AuthenticationProperties properties)
+    {
+        Response.StatusCode = StatusCodes.Status403Forbidden;
+        return Response.WriteAsJsonAsync(new ErrorResponse(StatusCodes.Status403Forbidden, "Se requiere rol de administrador."));
+    }
 }
 
 public static class ClaimsPrincipalExtensions

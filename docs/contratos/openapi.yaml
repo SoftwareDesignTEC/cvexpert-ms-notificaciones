@@ -681,6 +681,9 @@ components:
 
     Template:
       type: object
+      description: |
+        Plantilla de un tipo e idioma. Si ningún administrador la ha guardado, se devuelve el texto por defecto
+        con `updatedAt: 0` y sin `updatedBy`; así el cliente sabe cuándo mostrar "texto por defecto".
       required: [type, language, title, body, updatedAt]
       properties:
         type:
@@ -692,7 +695,9 @@ components:
         body:
           type: string
         updatedAt:
-          $ref: '#/components/schemas/EpochMillis'
+          allOf:
+            - $ref: '#/components/schemas/EpochMillis'
+          description: Cuándo se guardó por última vez. `0` en las plantillas por defecto.
         updatedBy:
           type: string
           description: Correo del administrador que la modificó por última vez. Se omite en las plantillas por defecto.

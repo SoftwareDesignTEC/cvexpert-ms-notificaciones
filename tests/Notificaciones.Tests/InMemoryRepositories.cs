@@ -80,6 +80,30 @@ public class InMemoryDirectoryRepository : IDirectoryRepository
         Task.FromResult(_entries.GetValueOrDefault(userId));
 }
 
+public class InMemoryTemplateRepository : ITemplateRepository
+{
+    private readonly ConcurrentDictionary<string, NotificationTemplate> _templates = new();
+
+    /// <summary>Cantidad de veces que se leyó la colección completa (para probar la caché).</summary>
+    public int Lecturas => _lecturas;
+    private int _lecturas;
+
+    public Task<IReadOnlyList<NotificationTemplate>> ListAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _lecturas);
+        return Task.FromResult<IReadOnlyList<NotificationTemplate>>(_templates.Values.ToList());
+    }
+
+    public Task<NotificationTemplate?> GetAsync(string type, string language, CancellationToken cancellationToken) =>
+        Task.FromResult(_templates.GetValueOrDefault(NotificationTemplate.IdFor(type, language)));
+
+    public Task UpsertAsync(NotificationTemplate template, CancellationToken cancellationToken)
+    {
+        _templates[template.Id] = template;
+        return Task.CompletedTask;
+    }
+}
+
 public class InMemoryDeviceRepository : IDeviceRepository
 {
     private readonly object _lock = new();
