@@ -14,23 +14,31 @@ public class MongoNotificationRepository(IMongoDatabase database) : INotificatio
 
     private readonly IMongoCollection<Notification> _collection = database.GetCollection<Notification>(CollectionName);
 
+    /// <summary>Orden de la lista: más recientes primero y, a igual createdAt, por _id.</summary>
+    public static readonly SortDefinition<Notification> ListSort =
+        Builders<Notification>.Sort.Descending(n => n.CreatedAt).Descending(n => n.Id);
+
+    /// <summary>
+    /// Índice compuesto de <see cref="ListSort"/>. Cosmos DB for MongoDB (RU) rechaza un sort por varios campos sin un
+    /// índice con esos mismos campos y direcciones. Nombre y forma iguales al creado a mano en producción, para que
+    /// crearlo de nuevo no haga nada.
+    /// </summary>
+    public const string ListSortIndexName = "createdAt_desc_id_desc";
+
+    private static readonly IndexKeysDefinitionBuilder<Notification> Keys = Builders<Notification>.IndexKeys;
+
+    /// <summary>Índices de la colección. Los crea <see cref="EnsureIndexesAsync"/>, que llama MongoIndexInitializer al arrancar.</summary>
+    public static IReadOnlyList<CreateIndexModel<Notification>> Indexes { get; } =
+    [
+        new(Keys.Ascending(n => n.EventId), new CreateIndexOptions { Name = "eventId_unique", Unique = true }),
+        new(Keys.Ascending(n => n.UserId).Descending(n => n.CreatedAt), new CreateIndexOptions { Name = "userId_createdAt" }),
+        new(Keys.Ascending(n => n.UserId).Ascending(n => n.ReadAt), new CreateIndexOptions { Name = "userId_readAt" }),
+        new(Keys.Descending(n => n.CreatedAt).Descending(n => n.Id), new CreateIndexOptions { Name = ListSortIndexName }),
+    ];
+
     // En Cosmos DB un índice único solo se puede crear con la colección vacía: por eso se crea al arrancar.
-    public Task EnsureIndexesAsync(CancellationToken cancellationToken)
-    {
-        var keys = Builders<Notification>.IndexKeys;
-        return _collection.Indexes.CreateManyAsync(
-        [
-            new CreateIndexModel<Notification>(
-                keys.Ascending(n => n.EventId),
-                new CreateIndexOptions { Name = "eventId_unique", Unique = true }),
-            new CreateIndexModel<Notification>(
-                keys.Ascending(n => n.UserId).Descending(n => n.CreatedAt),
-                new CreateIndexOptions { Name = "userId_createdAt" }),
-            new CreateIndexModel<Notification>(
-                keys.Ascending(n => n.UserId).Ascending(n => n.ReadAt),
-                new CreateIndexOptions { Name = "userId_readAt" }),
-        ], cancellationToken);
-    }
+    public Task EnsureIndexesAsync(CancellationToken cancellationToken) =>
+        _collection.Indexes.CreateManyAsync(Indexes, cancellationToken);
 
     public async Task<InsertResult> InsertAsync(Notification notification, CancellationToken cancellationToken)
     {
@@ -59,7 +67,7 @@ public class MongoNotificationRepository(IMongoDatabase database) : INotificatio
         if (skip >= total || skip > int.MaxValue) return new Page<Notification>([], total);
 
         var items = await _collection.Find(filter)
-            .SortByDescending(n => n.CreatedAt).ThenByDescending(n => n.Id)
+            .Sort(ListSort)
             .Skip((int)skip)
             .Limit(pageSize)
             .ToListAsync(cancellationToken);
