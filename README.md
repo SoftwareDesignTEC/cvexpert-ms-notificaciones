@@ -111,9 +111,11 @@ No consume hasta que existan los índices (ver "Colecciones e índices"): sin el
 
 `MongoIndexInitializer` crea los índices al arrancar, siempre que `Mongo:*` esté configurado, y reintenta cada 30 s si Mongo no responde. En Cosmos DB un índice único solo se puede crear con la colección vacía, así que el servicio debe arrancar antes de que haya datos.
 
+**Cosmos DB for MongoDB (RU):** todo sort por varios campos necesita un índice compuesto con esos mismos campos y direcciones; si no, la consulta falla con "The order by query does not have a corresponding composite index".
+
 | Colección | Documento | Índices |
 |---|---|---|
-| `notifications` | `eventId`, `userId`, `type`, `source`, `data`, `occurredAt`, `createdAt`, `readAt` | `eventId` único; `userId` + `createdAt` desc; `userId` + `readAt` |
+| `notifications` | `eventId`, `userId`, `type`, `source`, `data`, `occurredAt`, `createdAt`, `readAt` | `eventId` único; `userId` + `createdAt` desc; `userId` + `readAt`; `createdAt` desc + `_id` desc (`createdAt_desc_id_desc`, el orden de `GET /notifications`) |
 | `directory` | `_id` = userId, `email`, `language`, `updatedAt` | solo `_id` |
 | `devices` | `token`, `userId`, `platform`, `registeredAt` | `token` único; `userId` |
 | `templates` | `_id` = `"{type}:{language}"`, `type`, `language`, `title`, `body`, `updatedAt`, `updatedBy` | solo `_id` (la colección se crea con el primer `PUT`) |
