@@ -2,6 +2,39 @@
 
 Microservicio de **Notificaciones** de CVExpert. Consume eventos de otros servicios desde una cola de Azure Service Bus, los guarda en MongoDB y los entrega al usuario en tiempo real a la web (SignalR), como push al móvil (Firebase Cloud Messaging) y por correo con plantillas en español e inglés.
 
+CVExpert (Fase II de Diseño de Software, TEC) son cinco microservicios, cada uno en su repositorio, detrás de **Azure API Management (APIM)**, con clientes web (React) y Android. Este servicio notifica cuatro eventos: cambio de estado de una postulación (`application.status_changed`), CV generado (`cv.generated`), nueva oferta (`job.new`) y curso recomendado (`course.recommended`). Todos los canales (tiempo real, push y correo) son responsabilidad de este servicio; web y móvil consultan el mismo historial por REST.
+
+**Stack:** .NET 8 (ASP.NET Core Web API con controllers), `MongoDB.Driver` sobre Cosmos DB for MongoDB, `Azure.Messaging.ServiceBus`, SignalR con Azure SignalR Service (`Microsoft.Azure.SignalR`, tier Free), `FirebaseAdmin` (FCM), Azure Communication Services (correo), Swashbuckle (Swagger) y xUnit con `Microsoft.AspNetCore.Mvc.Testing`.
+
+## Estado
+
+**En producción y probado** (App Service `cvexpert-notificaciones`):
+- Consumidor de la cola contra Service Bus y Cosmos DB, incluido el descarte de duplicados (2026-11-04: se reenvió el `eventId` `d112ddfb-e5c5-4d92-8f6f-c3081119e6f5` y el log dijo "duplicado: ya estaba guardado; se completa").
+- Centro de notificaciones y tiempo real por APIM desde la web y Android, incluido el negotiate.
+- Push con FCM (`Firebase--ServiceAccountJson` en Key Vault) y correo con ACS (dominio verificado, `Acs--ConnectionString` en Key Vault, `Email__Sender` en el App Service).
+- Solo llamadas de APIM con certificado de cliente (2026-11-06, ver "Solo llamadas de APIM").
+- Todas las operaciones conectadas en APIM (`cv-api`); las 3 de plantillas desde el 2026-11-11.
+
+**Pendiente o fuera de esta fase:**
+- Push en Android: que la app registre su token de FCM y muestre el aviso queda fuera de esta fase (el backend ya envía).
+- Editor de plantillas en la web: falta que el administrador de APIM agregue el correo de Samuel a la lista de administradores para probarlo.
+- Preferencias por canal (pregunta abierta 7 del contrato): sin decidir; mientras tanto `job.new` no se envía por correo.
+- FIDs de Firebase: FirebaseAdmin 3.7 marca `MulticastMessage.Tokens` como obsoleto en favor de los Firebase Installation IDs. Pasar a FIDs cambia lo que registra Android, así que es un cambio de contrato pendiente de acordar.
+- `course.recommended` está confirmado en el contrato, pero Brecha/Cursos todavía no publica el evento.
+
+## Contratos
+
+La fuente de verdad es [`docs/contratos/`](docs/contratos/): `evento-notificacion.schema.json` (mensaje de la cola `notificaciones-eventos`), `openapi.yaml` (endpoints REST) y `README.md` (cómo publicar eventos, plantillas, SignalR, push y preguntas abiertas). **Si el código y el contrato no coinciden, manda el contrato:** cualquier cambio se acuerda con el equipo y se actualiza ahí primero.
+
+- Las copias en `cvexpert-docs` las mantiene Justin en su rama de consolidación (`contratos/notificaciones.yaml`, `eventos/`, `docs/fuentes.md`). Este repo no les abre PR: cuando cambie el contrato, se le avisa el commit de origen.
+- `NotificationEventValidator` valida la cola y está escrito a mano: si cambia el esquema, hay que cambiarlo también ahí y en sus pruebas.
+
+```bash
+# Validar los contratos (requiere Node)
+npx @redocly/cli lint docs/contratos/openapi.yaml
+npx ajv-cli validate --spec=draft2020 -c ajv-formats -s docs/contratos/evento-notificacion.schema.json -d <ejemplo>.json
+```
+
 ## Requisitos
 
 - [SDK de .NET](https://dotnet.microsoft.com/download) 8 o superior, con el runtime de .NET 8 instalado (el proyecto apunta a `net8.0`).
@@ -50,7 +83,7 @@ Remove-Item $tmp
 
 Así se guarda un solo secreto y se conservan los que ya estaban. No uses `Get-Content` ni la tubería de PowerShell: agregan un BOM o propiedades extra, y `dotnet user-secrets` no puede leer el JSON.
 
-- Para Service Bus usa una política de acceso compartido **de la cola**, solo con permiso **Listen**. No uses `RootManageSharedAccessKey`: da control total sobre todo el namespace. Si la cadena incluye `EntityPath`, debe coincidir con `ServiceBus:QueueName`.
+- Para Service Bus usa una política de acceso compartido **de la cola**, solo con permiso **Listen**. No uses `RootManageSharedAccessKey`: da control total sobre todo el namespace. Si la cadena incluye `EntityPath`, debe coincidir con `ServiceBus:QueueName`. En Azure, mejor Managed Identity que una cadena SAS.
 - En Cosmos DB con API de MongoDB la cadena de conexión debe llevar `retryWrites=false`.
 - En Azure las mismas claves van en Key Vault con `--` en lugar de `:` (por ejemplo `ServiceBus--ConnectionString`). Los secretos de los canales son `Firebase--ServiceAccountJson` (el contenido del JSON, por ejemplo con `az keyvault secret set --vault-name kv-cvexpert --name Firebase--ServiceAccountJson --file service-account.json`) y `Acs--ConnectionString`. `Email__Sender` y `Apim__CertificateThumbprint` van como configuración normal del App Service.
 
@@ -113,7 +146,9 @@ No consume hasta que existan los índices (ver "Colecciones e índices"): sin el
 
 `MongoIndexInitializer` crea los índices al arrancar, siempre que `Mongo:*` esté configurado, y reintenta cada 30 s si Mongo no responde. En Cosmos DB un índice único solo se puede crear con la colección vacía, así que el servicio debe arrancar antes de que haya datos.
 
-**Cosmos DB for MongoDB (RU):** todo sort por varios campos necesita un índice compuesto con esos mismos campos y direcciones; si no, la consulta falla con "The order by query does not have a corresponding composite index".
+**Cosmos DB for MongoDB (RU):** todo sort por varios campos necesita un índice compuesto con esos mismos campos y direcciones; si no, la consulta falla con "The order by query does not have a corresponding composite index". El de `GET /notifications` (`createdAt_desc_id_desc`) se creó a mano en producción con el mismo nombre y forma que en el código, así que crearlo de nuevo no hace nada; una prueba compara sus claves con el sort.
+
+Un índice nuevo va en el `EnsureIndexesAsync` de su repositorio (`Infrastructure/Mongo/`), que es lo que corre `MongoIndexInitializer`; un sort nuevo necesita su índice compuesto.
 
 | Colección | Documento | Índices |
 |---|---|---|
@@ -155,12 +190,12 @@ Exigen además `X-User-Role: admin` (política `Admin`): sin `X-User-Id`, 401; c
 
 ## Canales de entrega
 
-`CompositeNotificationDispatcher` lee el directorio una vez (idioma y correo; `es` y sin correo si el usuario no está registrado), arma `title` y `body` y llama en paralelo a cada canal activo. Si un canal falla, se registra con su nombre y los demás siguen.
+`CompositeNotificationDispatcher` lee el directorio una vez (idioma y correo; `es` y sin correo si el usuario no está registrado o si no se puede leer el directorio), arma `title` y `body` y llama en paralelo a cada canal activo. Si un canal falla, se registra con su nombre y los demás siguen. Un canal sin su configuración no se registra (advertencia al arrancar). `title` y `body` no se guardan: se arman al enviar o consultar.
 
 | Canal | Cuándo envía | Qué envía |
 |---|---|---|
 | **SignalR** (`SignalRNotificationChannel`) | Siempre; solo llega si el usuario tiene la web abierta | `notification` con la forma de un item de `GET /notifications` |
-| **Push FCM** (`FcmNotificationChannel`) | Con `Firebase:ServiceAccountJson`, a todos los tokens del usuario | `notification { title, body }` y `data { notificationId, type }` (ver sección 6 de [`docs/contratos/README.md`](docs/contratos/README.md)). Borra los tokens que FCM marca como `Unregistered`; `SenderIdMismatch` e `InvalidArgument` solo se registran. |
+| **Push FCM** (`FcmNotificationChannel`) | Con `Firebase:ServiceAccountJson`, a todos los tokens del usuario | `notification { title, body }` y `data { notificationId, type }` (ver sección 6 de [`docs/contratos/README.md`](docs/contratos/README.md)). Borra los tokens que FCM marca como `Unregistered`; `SenderIdMismatch` e `InvalidArgument` solo se registran, porque una service account equivocada no debe borrar tokens válidos. |
 | **Correo** (`EmailNotificationChannel`) | Con `Acs:ConnectionString` y `Email:Sender`, si el usuario está en el directorio y el tipo está en `EmailNotificationChannel.EmailTypes` | Asunto = `title`; HTML simple con `title`, `body` y el pie "CVExpert" (`DefaultEmailComposer`). La plantilla es texto plano: `title` y `body` se escapan completos para HTML (también los valores del evento) y los saltos de línea del `body` pasan a `<br>`. ACS lo acepta sin esperar a la entrega. |
 
 `job.new` no se envía por correo hasta decidir las preferencias por canal (pregunta abierta 7 del contrato): para cambiarlo, edita `EmailNotificationChannel.EmailTypes`.
@@ -199,7 +234,7 @@ Las pruebas de integración levantan la API en memoria (`NotificacionesApiFactor
 
 ### Prueba manual
 
-Con el servicio corriendo (`dotnet run --project src/Notificaciones.Api`):
+Con el servicio corriendo (`dotnet run --project src/Notificaciones.Api`). En Windows PowerShell 5.1 usa `curl.exe` en vez de `curl`, que ahí es alias de `Invoke-WebRequest`:
 
 ```bash
 # 200 { "status": "ok" }
@@ -224,10 +259,13 @@ curl -i -X PUT http://localhost:5029/notifications/templates/cv.generated/es -H 
 curl -i -X POST "http://localhost:5029/notifications/hub/negotiate?negotiateVersion=1" -H "X-User-Id: usuario-1"
 ```
 
-## Convenciones de la API
+## Reglas de diseño y convenciones
 
-- **Errores**: siempre `{ status, message, errors? }`; `errors` (`{ campo: mensaje }`) solo aparece en 400.
-- **Identidad**: esquema `ApimHeaders` a partir de `X-User-Id`, `X-User-Email` y `X-User-Role`. Las rutas de usuario llevan `[Authorize]`, responden 401 sin `X-User-Id` y leen el usuario con `User.GetUserId()`.
+- **Sin llamadas entre servicios:** ningún servicio llama a otro; los eventos llegan por la cola. Solo APIM llama a este backend.
+- **Identidad**: APIM valida el token de Google y agrega `X-User-Id` (el `sub` del token, el mismo en todos los servicios; APIM lo sobrescribe siempre), `X-User-Email` y, en rutas de administración, `X-User-Role`. Este servicio no valida tokens y solo confía en esos encabezados porque la llamada trae el certificado de APIM. Los encabezados solo llegan si la operación está conectada en APIM. En el código: esquema `ApimHeaders`; las rutas de usuario llevan `[Authorize]`, responden 401 sin `X-User-Id` y leen el usuario con `User.GetUserId()`, nunca del cuerpo ni de la ruta.
+- **Fechas**: siempre epoch en milisegundos UTC (`long`), nunca texto.
+- **Secretos**: ninguna URL, cadena de conexión ni credencial en el código ni en `appsettings.json` (local: `dotnet user-secrets`; Azure: Key Vault).
+- **Errores**: siempre `{ status, message, errors? }`; `errors` (`{ campo: mensaje }`) solo aparece en 400. Las validaciones usan DataAnnotations para salir con este formato.
 - **Paginación**: `{ totalRecords, page, pageSize, items }`.
 - **SignalR**: hub `/notifications/hub` con `[Authorize]`; mensaje `notification` con la forma de un item de `GET /notifications`. Para enviarle algo a un usuario: `IHubContext<NotificationsHub>.Clients.User(userId)`.
 
@@ -235,6 +273,8 @@ curl -i -X POST "http://localhost:5029/notifications/hub/negotiate?negotiateVers
 
 ```
 cvexpert-ms-notificaciones/
+├── .github/workflows/deploy.yml   # CI/CD (ver "CI/CD")
+├── docs/contratos/                # Contrato: esquema del evento, openapi.yaml y guía para los productores
 ├── Notificaciones.sln
 ├── src/Notificaciones.Api/
 │   ├── Auth/              # Certificado de cliente de APIM y autenticación por sus encabezados (esquema ApimHeaders)
