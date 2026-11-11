@@ -490,3 +490,9 @@ $RECYCLE.BIN/
 .env.*
 appsettings.*.local.json
 *.pfx
+
+##
+## CVExpert: configuración local de cada integrante (Claude Code y VS Code)
+##
+.claude/
+.vscode/

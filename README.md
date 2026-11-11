@@ -67,6 +67,8 @@ El motivo queda en el log (con la huella, nunca el certificado), como advertenci
 
 ### Pasos en Azure (en este orden)
 
+Aplicados en producción el 2026-11-06 con el certificado `cvexpert-client-cert`. Se dejan como guía para rotar el certificado o rehacer el App Service.
+
 1. **APIM** (quien lo administra): subir el certificado de cliente (`.pfx`) y configurar el backend de la API de Notificaciones para que lo presente.
 2. **Huella**: obtenerla del certificado público (`.cer`):
    ```powershell
@@ -138,7 +140,7 @@ Todos requieren `X-User-Id` (si falta, 401) y solo ven o modifican datos de ese 
 
 ### Plantillas (solo administradores)
 
-Exigen además `X-User-Role: admin` (política `Admin`): sin `X-User-Id`, 401; con identidad pero sin ese rol (exacto, en minúsculas), 403 `{ status: 403, message: "Se requiere rol de administrador." }`.
+Exigen además `X-User-Role: admin` (política `Admin`): sin `X-User-Id`, 401; con identidad pero sin ese rol (exacto, en minúsculas), 403 `{ status: 403, message: "Se requiere rol de administrador." }`. En APIM (`cv-api`), `X-User-Role: admin` solo se agrega si el correo del token está en la lista de administradores; si no, APIM responde 403 sin llegar al backend.
 
 | Ruta | Qué hace |
 |---|---|
@@ -258,7 +260,7 @@ El workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (**CI
 - **En cada push a `main`** (al fusionar un PR): lo mismo y además despliega en el App Service `cvexpert-notificaciones` y comprueba que `/health` responda 200.
 - **A mano:** desde la pestaña Actions → *CI/CD Notificaciones* → *Run workflow*, eligiendo la rama. Sirve para probar una rama en Azure antes de fusionarla, pero despliega sobre el mismo App Service: esa versión queda publicada hasta el siguiente despliegue de `main`.
 
-Los despliegues nunca corren dos a la vez. El único secreto del repo es `AZURE_WEBAPP_PUBLISH_PROFILE`. La configuración (`Mongo__*`, `ServiceBus__*`, `Azure__SignalR__ConnectionString`) vive en el App Service y en Key Vault (`kv-cvexpert`), no en el repo ni en el workflow; las pruebas no la necesitan.
+Los despliegues nunca corren dos a la vez. El único secreto del repo es `AZURE_WEBAPP_PUBLISH_PROFILE`. La configuración (`Mongo__*`, `ServiceBus__*`, `Azure__SignalR__ConnectionString`, `Firebase__ServiceAccountJson`, `Acs__ConnectionString`, `Email__Sender` y `Apim__CertificateThumbprint`) vive en el App Service y en Key Vault (`kv-cvexpert`), no en el repo ni en el workflow; las pruebas no la necesitan.
 
 ## Forma de trabajo
 
