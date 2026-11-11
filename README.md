@@ -61,7 +61,7 @@ APIM presenta un certificado de cliente al llamar al backend, y el App Service l
 - la huella no es ninguna de las configuradas (sin distinguir mayúsculas e ignorando espacios),
 - o la fecha actual está fuera de `NotBefore`–`NotAfter`.
 
-El motivo queda en el log (con la huella, nunca el certificado). `/health` está excluido. Sin la clave, el middleware no se activa y se registra una advertencia.
+El motivo queda en el log (con la huella, nunca el certificado), como advertencia; los pings internos del App Service (`GET /` de Always On y `GET /robots933456.txt` del arranque) también reciben 403, pero se registran en Debug para no llenar el log. `/health` está excluido. Sin la clave, el middleware no se activa y se registra una advertencia.
 
 **Importante:** el certificado de APIM es público. El chequeo solo prueba que la llamada viene de APIM si el App Service está en **Client certificate mode = Required**: así es el App Service quien llena `X-ARR-ClientCert` después de verificar en el TLS que el cliente tiene la clave privada. Sin ese modo, cualquiera podría mandar el encabezado a mano con el certificado público.
 

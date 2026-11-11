@@ -18,6 +18,13 @@ public class ApimCertificateMiddleware(
 {
     public const string CertificateHeader = "X-ARR-ClientCert";
 
+    /// <summary>
+    /// Pings internos del App Service, sin certificado: Always On (<c>GET /</c>, cada 5 minutos) y el de arranque
+    /// (<c>GET /robots933456.txt</c>). Se rechazan igual, pero se registran en Debug para no llenar el log de advertencias.
+    /// </summary>
+    public static readonly IReadOnlySet<string> PlatformPingPaths =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/", "/robots933456.txt" };
+
     /// <summary>"AB CD, , ef01" → { "ABCD", "EF01" }: separa por coma, quita espacios e ignora entradas vacías.</summary>
     public static IReadOnlySet<string> ParseThumbprints(string? configured) =>
         (configured ?? "")
@@ -42,7 +49,9 @@ public class ApimCertificateMiddleware(
         }
 
         // Solo la huella (pública), nunca el certificado.
-        logger.LogWarning(
+        var path = context.Request.Path.HasValue ? context.Request.Path.Value! : "/";
+        logger.Log(
+            PlatformPingPaths.Contains(path) ? LogLevel.Debug : LogLevel.Warning,
             "Llamada rechazada a {Method} {Path}: {Reason} (huella {Thumbprint})",
             context.Request.Method, context.Request.Path, rejection, thumbprint ?? "-");
 
