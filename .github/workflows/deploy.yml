@@ -64,7 +64,8 @@ jobs:
           package: ${{ runner.temp }}/publish
 
       # --retry-all-errors cubre también el arranque en frío (conexión rechazada o 503); -L sigue la redirección a HTTPS.
+      # 12 reintentos cada 15 s: al menos 3 minutos de espera, porque en producción el arranque en frío tardó unos 2,5.
       - name: Comprobar /health
         env:
           WEBAPP_URL: ${{ steps.deploy.outputs.webapp-url }}
-        run: curl --fail --silent --show-error --location --retry 5 --retry-delay 10 --retry-all-errors --max-time 30 "${WEBAPP_URL%/}/health"
+        run: curl --fail --silent --show-error --location --retry 12 --retry-delay 15 --retry-all-errors --max-time 30 "${WEBAPP_URL%/}/health"

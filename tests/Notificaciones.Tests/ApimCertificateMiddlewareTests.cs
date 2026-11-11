@@ -3,7 +3,9 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Logging;
 using Notificaciones.Api.Auth;
 
 namespace Notificaciones.Tests;
@@ -134,6 +136,54 @@ public class ApimCertificateMiddlewareTests : IClassFixture<ApimConfigurado>
         var response = await _apim.Factory.CreateClient().GetAsync("/health");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+}
+
+/// <summary>Nivel del log al rechazar: los pings internos del App Service van en Debug; lo demás, en Warning.</summary>
+public class ApimCertificateNivelDeLogTests
+{
+    [Theory]
+    [InlineData("/", LogLevel.Debug)]
+    [InlineData("", LogLevel.Debug)]
+    [InlineData("/robots933456.txt", LogLevel.Debug)]
+    [InlineData("/ROBOTS933456.TXT", LogLevel.Debug)]
+    [InlineData("/notifications/unread-count", LogLevel.Warning)]
+    [InlineData("/robots.txt", LogLevel.Warning)]
+    [InlineData("/notifications/hub/negotiate", LogLevel.Warning)]
+    public async Task SinCertificado_Responde403YRegistraConElNivelDeLaRuta(string ruta, LogLevel nivel)
+    {
+        var logger = new LoggerQueCaptura();
+        var siguienteLlamado = false;
+        var middleware = new ApimCertificateMiddleware(
+            _ => { siguienteLlamado = true; return Task.CompletedTask; },
+            ApimCertificateMiddleware.ParseThumbprints("ABCD"),
+            TimeProvider.System,
+            logger);
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.Path = ruta;
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(siguienteLlamado);
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        var registro = Assert.Single(logger.Registros);
+        Assert.Equal(nivel, registro.Nivel);
+        Assert.StartsWith("Llamada rechazada a GET", registro.Mensaje);
+    }
+
+    private sealed class LoggerQueCaptura : ILogger<ApimCertificateMiddleware>
+    {
+        public List<(LogLevel Nivel, string Mensaje)> Registros { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Registros.Add((logLevel, formatter(state, exception)));
     }
 }
 
