@@ -60,18 +60,22 @@ public class MongoNotificationRepository(IMongoDatabase database) : INotificatio
         if (unread is true) filter &= Filter.Eq(n => n.ReadAt, null);
         if (unread is false) filter &= Filter.Ne(n => n.ReadAt, null);
 
-        var total = await _collection.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
+        // El conteo y la página van en paralelo: Cosmos está en otra región y cada consulta es un viaje de ida y vuelta.
+        // Una página más allá del total trae una lista vacía, igual que antes.
+        var totalTask = _collection.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
 
         // Una página más allá de int.MaxValue elementos no puede tener resultados.
         var skip = (long)(page - 1) * pageSize;
-        if (skip >= total || skip > int.MaxValue) return new Page<Notification>([], total);
+        if (skip > int.MaxValue) return new Page<Notification>([], await totalTask);
 
-        var items = await _collection.Find(filter)
+        var itemsTask = _collection.Find(filter)
             .Sort(ListSort)
             .Skip((int)skip)
             .Limit(pageSize)
             .ToListAsync(cancellationToken);
-        return new Page<Notification>(items, total);
+
+        await Task.WhenAll(totalTask, itemsTask);
+        return new Page<Notification>(await itemsTask, await totalTask);
     }
 
     public Task<long> CountUnreadAsync(string userId, CancellationToken cancellationToken) =>

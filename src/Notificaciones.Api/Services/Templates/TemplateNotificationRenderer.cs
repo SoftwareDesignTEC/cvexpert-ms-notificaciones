@@ -14,6 +14,21 @@ public class TemplateNotificationRenderer(TemplateCache cache, ILogger<TemplateN
         return Render(notification, language, await GetTextAsync(notification.Type, language, cancellationToken));
     }
 
+    /// <summary>
+    /// Carga las plantillas en la caché si venció. Si falla no hace nada: <see cref="RenderAsync"/> vuelve a intentarlo,
+    /// lo registra y usa el texto por defecto.
+    /// </summary>
+    public async ValueTask PrepareAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await cache.GetAsync(cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
     /// <summary>Rellena los marcadores de <paramref name="text"/> con el data de la notificación.</summary>
     public static RenderedText Render(Notification notification, string language, TemplateText text) => new(
         TemplatePlaceholders.Fill(text.Title, notification.Data, language),

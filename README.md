@@ -173,6 +173,8 @@ Todos requieren `X-User-Id` (si falta, 401) y solo ven o modifican datos de ese 
 
 `title` y `body` de cada notificación se arman al responder, en el idioma del usuario según el directorio (`es` si no está registrado), con las plantillas (ver "Plantillas").
 
+Cosmos DB está en Central US y el App Service en East US, así que cada consulta es un viaje entre regiones. Por eso `GET /notifications` pide en paralelo el total, la página, el idioma y las plantillas, y `PATCH /notifications/{id}/read` pide el idioma y las plantillas mientras marca. Una prueba (`ConsultasEnParaleloTests`) falla si vuelven a ir una tras otra.
+
 ### Plantillas (solo administradores)
 
 Exigen además `X-User-Role: admin` (política `Admin`): sin `X-User-Id`, 401; con identidad pero sin ese rol (exacto, en minúsculas), 403 `{ status: 403, message: "Se requiere rol de administrador." }`. En APIM (`cv-api`), `X-User-Role: admin` solo se agrega si el correo del token está en la lista de administradores; si no, APIM responde 403 sin llegar al backend.
