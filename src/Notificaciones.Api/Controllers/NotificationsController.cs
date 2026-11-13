@@ -32,8 +32,14 @@ public class NotificationsController(
         CancellationToken cancellationToken = default)
     {
         var userId = User.GetUserId();
-        var result = await notifications.ListAsync(userId, unread, page, pageSize, cancellationToken);
-        var language = await directory.GetLanguageAsync(userId, cancellationToken);
+
+        // La página, el idioma y las plantillas no dependen entre sí: se piden en paralelo.
+        var resultTask = notifications.ListAsync(userId, unread, page, pageSize, cancellationToken);
+        var languageTask = directory.GetLanguageAsync(userId, cancellationToken);
+        var templatesTask = renderer.PrepareAsync(cancellationToken).AsTask();
+        await Task.WhenAll(resultTask, languageTask, templatesTask);
+        var result = await resultTask;
+        var language = await languageTask;
 
         var items = new List<NotificationResponse>(result.Items.Count);
         foreach (var notification in result.Items)
@@ -56,12 +62,19 @@ public class NotificationsController(
     public async Task<IActionResult> MarkRead(string id, CancellationToken cancellationToken)
     {
         var userId = User.GetUserId();
-        var notification = await notifications.MarkReadAsync(
+
+        // El idioma y las plantillas se piden mientras se marca, para no esperarlos después.
+        var notificationTask = notifications.MarkReadAsync(
             id, userId, timeProvider.GetUtcNow().ToUnixTimeMilliseconds(), cancellationToken);
+        var languageTask = directory.GetLanguageAsync(userId, cancellationToken);
+        var templatesTask = renderer.PrepareAsync(cancellationToken).AsTask();
+        await Task.WhenAll(notificationTask, languageTask, templatesTask);
+
+        var notification = await notificationTask;
         if (notification is null)
             return NotFound(new ErrorResponse(StatusCodes.Status404NotFound, "Notificación no encontrada."));
 
-        var language = await directory.GetLanguageAsync(userId, cancellationToken);
+        var language = await languageTask;
         return Ok(NotificationResponse.From(notification, await renderer.RenderAsync(notification, language, cancellationToken)));
     }
 

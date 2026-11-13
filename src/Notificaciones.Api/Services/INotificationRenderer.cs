@@ -6,6 +6,12 @@ namespace Notificaciones.Api.Services;
 public interface INotificationRenderer
 {
     ValueTask<RenderedText> RenderAsync(Notification notification, string language, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deja listo lo que <see cref="RenderAsync"/> necesita leer (las plantillas), para hacerlo en paralelo con otras
+    /// consultas. Opcional: si falla, <see cref="RenderAsync"/> lo resuelve igual.
+    /// </summary>
+    ValueTask PrepareAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
 
 public record RenderedText(string Title, string Body);
